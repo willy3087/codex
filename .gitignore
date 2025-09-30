@@ -50,6 +50,11 @@ yarn-error.log*
 .env*
 !.env.example
 
+# secrets
+*.key
+*api-key*
+test-bff.sh.local
+
 # package
 *.tgz
 
