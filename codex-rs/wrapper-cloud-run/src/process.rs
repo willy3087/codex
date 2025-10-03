@@ -335,11 +335,10 @@ pub async fn run_codex_app_server_stream(req: ExecRequest) -> SseEventStream {
                 
                 // Usa os parâmetros recebidos para configurar políticas
                 op.insert("approval_policy".to_string(), json!(approval_policy));
-                op.insert("sandbox_policy".to_string(), json!({
-                    "mode": "danger-full-access",
-                    "allow_network": allow_network,
-                    "allow_file_operations": allow_file_operations
-                }));
+                // O SandboxPolicy é um enum com #[serde(tag = "mode", rename_all = "kebab-case")]
+                // Para DangerFullAccess, o serde serializa automaticamente como: {"mode": "danger-full-access"}
+                // Não adicione campos extras como allow_network/allow_file_operations, pois não existem nesse enum variant
+                op.insert("sandbox_policy".to_string(), json!("danger-full-access"));
                 op.insert("model".to_string(), json!(model));
                 // Usar "medium" como valor padrão para effort
                 op.insert("effort".to_string(), json!("medium"));
