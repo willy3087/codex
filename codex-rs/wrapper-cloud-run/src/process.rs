@@ -22,7 +22,6 @@ use chrono::Utc;
 use serde::Deserialize;
 use serde::Serialize;
 use std::env;
-use std::path::PathBuf;
 use tokio::fs;
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -40,22 +39,31 @@ pub struct SessionPersistData {
 }
 
 /// Upload de arquivo individual para Google Cloud Storage
-pub async fn upload_file_to_gcs(bucket: &str, file_path: &str, object_name: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub async fn upload_file_to_gcs(
+    bucket: &str,
+    file_path: &str,
+    object_name: &str,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     use std::process::Command;
-    
+
     // Usa gsutil para fazer upload (mais confiável que a biblioteca)
     let output = Command::new("gsutil")
         .arg("cp")
         .arg(file_path)
-        .arg(&format!("gs://{}/{}", bucket, object_name))
+        .arg(format!("gs://{}/{}", bucket, object_name))
         .output()?;
-    
+
     if !output.status.success() {
         let error_msg = String::from_utf8_lossy(&output.stderr);
         return Err(format!("gsutil failed: {}", error_msg).into());
     }
-    
-    tracing::info!("Arquivo {} enviado com sucesso para gs://{}/{}", file_path, bucket, object_name);
+
+    tracing::info!(
+        "Arquivo {} enviado com sucesso para gs://{}/{}",
+        file_path,
+        bucket,
+        object_name
+    );
     Ok(())
 }
 
@@ -68,9 +76,9 @@ pub async fn upload_created_files(session_id: &str, work_dir: &str) -> Vec<Strin
             return vec![];
         }
     };
-    
+
     let mut uploaded_files = Vec::new();
-    
+
     // Lista todos os arquivos no diretório de trabalho
     if let Ok(mut entries) = fs::read_dir(work_dir).await {
         while let Ok(Some(entry)) = entries.next_entry().await {
@@ -78,19 +86,19 @@ pub async fn upload_created_files(session_id: &str, work_dir: &str) -> Vec<Strin
                 if metadata.is_file() {
                     let file_path = entry.path();
                     let file_name = file_path.file_name().unwrap().to_string_lossy();
-                    
+
                     // Pula arquivos temporários e de sistema
                     if file_name.starts_with('.') || file_name.ends_with(".tmp") {
                         continue;
                     }
-                    
+
                     let object_name = format!("files/{}/{}", session_id, file_name);
                     let file_path_str = file_path.to_string_lossy();
-                    
+
                     match upload_file_to_gcs(&bucket, &file_path_str, &object_name).await {
                         Ok(_) => {
                             uploaded_files.push(format!("gs://{}/{}", bucket, object_name));
-                        },
+                        }
                         Err(e) => {
                             tracing::error!("Falha ao enviar arquivo {}: {}", file_path_str, e);
                         }
@@ -99,7 +107,7 @@ pub async fn upload_created_files(session_id: &str, work_dir: &str) -> Vec<Strin
             }
         }
     }
-    
+
     uploaded_files
 }
 
@@ -117,7 +125,7 @@ pub async fn save_session_to_storage(mut session: SessionPersistData) {
         session.session_id,
         session.timestamp.to_rfc3339()
     );
-    
+
     // Upload dos arquivos criados primeiro
     let uploaded_files = upload_created_files(&session.session_id, "/tmp").await;
     session.created_files = if uploaded_files.is_empty() {
@@ -125,7 +133,7 @@ pub async fn save_session_to_storage(mut session: SessionPersistData) {
     } else {
         Some(uploaded_files)
     };
-    
+
     let json_data = match serde_json::to_vec_pretty(&session) {
         Ok(j) => j,
         Err(e) => {
@@ -133,21 +141,21 @@ pub async fn save_session_to_storage(mut session: SessionPersistData) {
             return;
         }
     };
-    
+
     // Salva temporariamente para upload
     let temp_file = format!("/tmp/session-{}.json", session.session_id);
     if let Err(e) = fs::write(&temp_file, &json_data).await {
         tracing::error!("Falha ao escrever arquivo temporário: {:?}", e);
         return;
     }
-    
+
     // Upload da sessão
     match upload_file_to_gcs(&bucket, &temp_file, &object_name).await {
         Ok(_) => {
             tracing::info!("Sessão persistida em gs://{}/{}", bucket, object_name);
             // Remove arquivo temporário
             let _ = fs::remove_file(&temp_file).await;
-        },
+        }
         Err(e) => {
             tracing::error!("Falha ao persistir sessão: {:?}", e);
         }
@@ -160,14 +168,14 @@ pub async fn run_codex_app_server_stream(req: ExecRequest) -> SseEventStream {
     use tokio::time::Duration;
     let (tx, rx) = mpsc::unbounded_channel();
     let prompt = req.prompt.clone();
-    let timeout_ms = req.timeout_ms.unwrap_or(30_000);
+    let timeout_ms = req.timeout_ms.unwrap_or(60_000);
     let session_id = req
         .session_id
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let model = req
         .model
         .clone()
-        .unwrap_or_else(|| "gpt-4.1-mini".to_string());
+        .unwrap_or_else(|| "gpt-4o-mini".to_string());
 
     // Spawn subprocesso em task separada com timeout e kill garantido
     tokio::spawn({
@@ -224,12 +232,12 @@ pub async fn run_codex_app_server_stream(req: ExecRequest) -> SseEventStream {
             async fn run_process_with_ref(
                 prompt: String,
                 model: String,
-                timeout_ms: u64,
+                // timeout_ms: u64,
                 session_id: String,
                 tx: mpsc::UnboundedSender<Event>,
                 child_ref: Arc<Mutex<Option<Child>>>,
-                allow_network: bool,
-                allow_file_operations: bool,
+                // allow_network: bool,
+                // allow_file_operations: bool,
                 approval_policy: String,
             ) {
                 let start_time = std::time::Instant::now();
@@ -265,7 +273,7 @@ pub async fn run_codex_app_server_stream(req: ExecRequest) -> SseEventStream {
 
                 // IMPORTANTE: Force full access via CLI args (o JSON sandbox_policy é ignorado!)
                 cmd.arg("-c");
-                cmd.arg("sandbox_mode=off");
+                cmd.arg("sandbox_mode=danger-full-access");
 
                 cmd.stdin(std::process::Stdio::piped())
                     .stdout(std::process::Stdio::piped())
@@ -329,24 +337,33 @@ pub async fn run_codex_app_server_stream(req: ExecRequest) -> SseEventStream {
                 // Usa UserTurn para especificar o modelo e outras configurações
                 let mut op = serde_json::Map::new();
                 op.insert("type".to_string(), json!("user_turn"));
-                op.insert("items".to_string(), json!([
-                    {
-                        "type": "text",
-                        "text": prompt
-                    }
-                ]));
+                op.insert(
+                    "items".to_string(),
+                    json!([
+                        {
+                            "type": "text",
+                            "text": prompt
+                        }
+                    ]),
+                );
                 op.insert("cwd".to_string(), json!("/tmp"));
-                
+
                 // Usa os parâmetros recebidos para configurar políticas
                 op.insert("approval_policy".to_string(), json!(approval_policy));
                 // O SandboxPolicy é um enum com #[serde(tag = "mode", rename_all = "kebab-case")]
                 // Para DangerFullAccess, precisa do objeto com a tag "mode"
-                op.insert("sandbox_policy".to_string(), json!({"mode": "danger-full-access"}));
+                op.insert(
+                    "sandbox_policy".to_string(),
+                    json!({"mode": "danger-full-access"}),
+                );
                 op.insert("model".to_string(), json!(model));
                 // Usar "medium" como valor padrão para effort
                 op.insert("effort".to_string(), json!("medium"));
                 op.insert("summary".to_string(), json!("auto"));
-                op.insert("final_output_json_schema".to_string(), serde_json::Value::Null);
+                op.insert(
+                    "final_output_json_schema".to_string(),
+                    serde_json::Value::Null,
+                );
 
                 let submission = json!({
                     "id": "req-1",
@@ -502,21 +519,22 @@ pub async fn run_codex_app_server_stream(req: ExecRequest) -> SseEventStream {
             }
 
             // Extrai configurações da requisição para manter compatibilidade
-            let allow_network = req.allow_network.unwrap_or(true);
-            let allow_file_operations = req.allow_file_operations.unwrap_or(true);
+            // let allow_network = req.allow_network.unwrap_or(true);
+            // let allow_file_operations = req.allow_file_operations.unwrap_or(true);
             // Valores válidos para approval_policy: "untrusted", "on-failure", "on-request", "never"
             // Usando "never" = nunca pedir aprovação, executar tudo automaticamente
-            let approval_policy = req.approval_policy.as_deref().unwrap_or("never").to_string();
-            
+            let approval_policy = req
+                .approval_policy
+                .as_deref()
+                .unwrap_or("never")
+                .to_string();
+
             let process_fut = run_process_with_ref(
                 prompt.clone(),
                 model.clone(),
-                timeout_ms,
                 session_id.clone(),
                 tx.clone(),
                 child_ref_clone,
-                allow_network,
-                allow_file_operations,
                 approval_policy,
             );
             match timeout(Duration::from_millis(timeout_ms), process_fut).await {
