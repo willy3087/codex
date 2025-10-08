@@ -32,7 +32,7 @@ RUN cargo build --release --bin codex-wrapper-cloud-run
 # Use debian:trixie-slim to match GLIBC version from rust:1.90-slim
 FROM debian:trixie-slim
 
-# Install runtime dependencies including Google Cloud SDK, Python 3 and Node.js
+# Install runtime dependencies including Google Cloud SDK, Python 3, Node.js and uv
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     libssl3 \
@@ -48,7 +48,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | tee -a /etc/apt/sources.list.d/google-cloud-sdk.list \
     && curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg \
     && apt-get update && apt-get install -y --no-install-recommends google-cloud-cli \
+    && curl -LsSf https://astral.sh/uv/install.sh | sh \
     && rm -rf /var/lib/apt/lists/*
+
+# Add uv to PATH
+ENV PATH="/root/.cargo/bin:$PATH"
 
 # Create non-root user for security best practices
 RUN useradd -m -u 1000 -s /bin/bash appuser
@@ -70,18 +74,18 @@ COPY wrapper-cloud-run/config.toml /app/config.toml
 # Copy MCP Pipedrive server
 COPY wrapper-cloud-run/mcp-servers/pipedrive /app/mcp-servers/pipedrive
 
-# Install Python dependencies for MCP Pipedrive
+# Install Python dependencies for MCP Pipedrive using uv
 RUN cd /app/mcp-servers/pipedrive && \
-    python3 -m pip install --no-cache-dir --break-system-packages \
-    httpx>=0.28.1 \
-    mcp[cli]>=1.8.0 \
-    pydantic>=2.11.4 \
-    python-dotenv>=1.1.0 \
-    fastmcp
+    uv venv .venv && \
+    . .venv/bin/activate && \
+    uv pip install -e .
 
 # Install Node.js dependencies for MCP Pipedrive
 RUN cd /app/mcp-servers/pipedrive && \
     npm install --production
+
+# Add venv to PATH for MCP server
+ENV PATH="/app/mcp-servers/pipedrive/.venv/bin:$PATH"
 
 # Ensure both binaries are executable
 RUN chmod +x /app/codex-wrapper-cloud-run /app/codex
