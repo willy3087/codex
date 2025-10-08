@@ -1,0 +1,39 @@
+# Codex Wrapper Cloud Run Configuration
+
+# MCP Servers Configuration
+# Registra servidores MCP externos que podem ser chamados pelo Codex
+
+[mcp_servers.pipedrive]
+# Usando o MCP Pipedrive deployado no Cloud Run
+session_url = "https://mcp-pipedrive-467992722695.us-central1.run.app/sessions"
+url = "https://mcp-pipedrive-467992722695.us-central1.run.app/messages/"
+
+# Autenticação via bearer token (opcional, caso Cloud Run esteja público)
+# bearer_token = "seu-token-aqui"
+
+# Timeouts
+startup_timeout_sec = 30 # Tempo para inicializar conexão
+tool_timeout_sec = 120   # Timeout para cada chamada de ferramenta
+
+# Exemplo de configuração local via stdio (caso queira rodar localmente):
+# [mcp_servers.pipedrive-local]
+# command = "docker"
+# args = ["run", "-i", "--rm", "-e", "PIPEDRIVE_API_TOKEN", "us-central1-docker.pkg.dev/elaihub-prod/pipedrive-mcp/server:latest"]
+# startup_timeout_sec = 30
+# tool_timeout_sec = 120
+
+# ===== Outras Configurações do Codex =====
+
+# Modelo padrão
+model = "gpt-4o-mini"
+
+# Política de aprovação para comandos
+# Opções: "auto", "never", "ask"
+approval_policy = "auto"
+
+# Política de sandbox
+# Opções: "none", "read-only", "full"
+sandbox_policy = "danger-full-access"
+
+# Nível de log
+# RUST_LOG será sobrescrito pela variável de ambiente se definida

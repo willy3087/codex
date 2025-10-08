@@ -17,24 +17,38 @@ pub async fn auth_middleware(request: Request, next: Next) -> Result<Response, S
         }
     };
 
-    // Extrai o token do header Authorization
+    // Extrai o token do header X-Gateway-Key OU Authorization (compatibilidade)
+    let gateway_key = request
+        .headers()
+        .get("X-Gateway-Key")
+        .and_then(|h| h.to_str().ok());
+
     let auth_header = request
         .headers()
         .get("Authorization")
         .and_then(|h| h.to_str().ok());
 
-    match auth_header {
-        Some(header) if header.starts_with("Bearer ") => {
-            let token = header.trim_start_matches("Bearer ");
-            if token == required_key {
-                Ok(next.run(request).await)
-            } else {
-                tracing::warn!("Invalid API key provided");
-                Err(StatusCode::UNAUTHORIZED)
-            }
+    // Prioriza X-Gateway-Key, depois Authorization
+    let provided_key = if let Some(key) = gateway_key {
+        Some(key.to_string())
+    } else if let Some(header) = auth_header {
+        if header.starts_with("Bearer ") {
+            Some(header.trim_start_matches("Bearer ").to_string())
+        } else {
+            None
         }
-        _ => {
-            tracing::warn!("Missing or malformed Authorization header");
+    } else {
+        None
+    };
+
+    match provided_key {
+        Some(key) if key == required_key => Ok(next.run(request).await),
+        Some(_) => {
+            tracing::warn!("Invalid API key provided");
+            Err(StatusCode::UNAUTHORIZED)
+        }
+        None => {
+            tracing::warn!("Missing X-Gateway-Key or Authorization header");
             Err(StatusCode::UNAUTHORIZED)
         }
     }

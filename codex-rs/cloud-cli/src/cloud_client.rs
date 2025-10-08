@@ -77,10 +77,14 @@ impl CloudClient {
         let client = reqwest::Client::new();
         let url = format!("{}/api/v1/exec/stream", self.base_url);
 
+        // Gateway API Key hardcoded (poderia vir de env var)
+        const GATEWAY_API_KEY: &str = "IxF3WoAB6IBrNJKrC/Jsr5yjt2bXHZkBSHFDBhcIVvc=";
+
         let response = client
             .post(&url)
             .header(CONTENT_TYPE, "application/json")
             .header(AUTHORIZATION, format!("Bearer {}", self.token))
+            .header("X-Gateway-Key", GATEWAY_API_KEY)
             .json(&request)
             .send()
             .await
@@ -93,7 +97,7 @@ impl CloudClient {
         }
 
         // Converte o stream de bytes em stream de eventos SSE
-        let stream = response.bytes_stream().map(move |chunk_result| {
+        let stream = response.bytes_stream().map(|chunk_result| {
             chunk_result
                 .context("Erro ao ler stream")
                 .and_then(|chunk| {

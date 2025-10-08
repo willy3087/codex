@@ -44,8 +44,13 @@ async fn main() {
         .route("/health", get(|| async { "OK" }))
         .merge(protected_routes);
 
-    // Endereço padrão para Cloud Run
-    let addr = SocketAddr::from(([0, 0, 0, 0], 8080));
+    // Lê a porta da variável de ambiente PORT (Cloud Run) ou usa 8080 como padrão
+    let port = std::env::var("PORT")
+        .ok()
+        .and_then(|p| p.parse::<u16>().ok())
+        .unwrap_or(8080);
+
+    let addr = SocketAddr::from(([0, 0, 0, 0], port));
     tracing::info!("Iniciando servidor Axum em {}", addr);
 
     let listener = TcpListener::bind(addr).await.unwrap();

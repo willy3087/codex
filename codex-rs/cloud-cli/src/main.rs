@@ -268,12 +268,59 @@ async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()
             let exit_info = codex_tui::run_main(interactive, codex_linux_sandbox_exe).await?;
             print_exit_messages(exit_info);
         }
-        Some(Subcommand::Exec(mut exec_cli)) => {
-            prepend_config_flags(
-                &mut exec_cli.config_overrides,
-                root_config_overrides.clone(),
-            );
-            codex_exec::run_main(exec_cli, codex_linux_sandbox_exe).await?;
+        Some(Subcommand::Exec(exec_cli)) => {
+            // 🌩️ CLOUD-CLI: Executar remotamente via Cloud Run
+            use codex_cloud_cli::cloud_client::{CloudClient, ExecRequest};
+            use futures::StreamExt;
+
+            println!("🌩️  Conectando ao Codex Cloud...");
+
+            let client = CloudClient::new()?;
+            let prompt = exec_cli.prompt.unwrap_or_default();
+
+            let request = ExecRequest {
+                prompt,
+                model: None, // Usar modelo padrão do cloud
+                timeout_ms: Some(120000), // 2 minutos
+                session_id: None,
+            };
+
+            let mut stream = client.exec_stream(request).await?;
+
+            while let Some(event_result) = stream.next().await {
+                match event_result {
+                    Ok(event) => {
+                        // Streaming de output em tempo real
+                        if event.event == "agent_message_delta" {
+                            // O formato é: {"id":"req-1","msg":{"delta":"text","type":"agent_message_delta"}}
+                            if let Some(msg) = event.data.get("msg") {
+                                if let Some(delta) = msg.get("delta").and_then(|v| v.as_str()) {
+                                    print!("{}", delta);
+                                    use std::io::Write;
+                                    std::io::stdout().flush()?;
+                                }
+                            }
+                        } else if event.event == "task_complete" || event.event == "stdout_line" {
+                            // Verifica se é task_complete no msg
+                            if let Some(msg) = event.data.get("msg") {
+                                if msg.get("type").and_then(|v| v.as_str()) == Some("task_complete") {
+                                    println!("\n✅ Tarefa concluída!");
+                                    break;
+                                }
+                            }
+                        } else if event.event == "error" {
+                            if let Some(error) = event.data.get("message").and_then(|v| v.as_str()) {
+                                eprintln!("\n❌ Erro: {}", error);
+                            }
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("❌ Erro no stream: {}", e);
+                        break;
+                    }
+                }
+            }
         }
         Some(Subcommand::McpServer) => {
             codex_mcp_server::run_main(codex_linux_sandbox_exe, root_config_overrides).await?;

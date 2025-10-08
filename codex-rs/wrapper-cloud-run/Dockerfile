@@ -19,8 +19,8 @@ WORKDIR /build
 
 # Copy only the files needed for this specific crate (not the entire workspace)
 # This allows the wrapper to be built independently
-COPY Cargo.toml Cargo.lock ./
-COPY src ./src
+COPY wrapper-cloud-run/Cargo.toml wrapper-cloud-run/Cargo.lock ./
+COPY wrapper-cloud-run/src ./src
 
 # Build the wrapper binary in release mode with optimizations
 # The binary name matches the package name in Cargo.toml
@@ -57,7 +57,10 @@ COPY --from=builder /build/target/release/codex-wrapper-cloud-run /app/codex-wra
 # Copy the pre-compiled codex binary (musl version for static linking)
 # The process.rs expects to find "codex" in the same directory as the wrapper
 # Note: We'll copy this from the build context root and rename it
-COPY codex-x86_64-unknown-linux-musl /app/codex
+COPY wrapper-cloud-run/codex-x86_64-unknown-linux-musl /app/codex
+
+# Copy config.toml for MCP and model configuration
+COPY wrapper-cloud-run/config.toml /app/config.toml
 
 # Ensure both binaries are executable
 RUN chmod +x /app/codex-wrapper-cloud-run /app/codex
@@ -72,7 +75,7 @@ USER appuser
 EXPOSE 8080
 
 # Set environment variables
-ENV PORT=8080
+# ENV PORT=8080
 ENV RUST_LOG=info
 
 # Health check for container orchestrators

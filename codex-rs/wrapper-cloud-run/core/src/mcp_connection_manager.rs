@@ -125,10 +125,11 @@ impl McpClientAdapter {
     async fn new_streamable_http_client(
         url: String,
         bearer_token: Option<String>,
+        session_url: Option<String>,
         params: mcp_types::InitializeRequestParams,
         startup_timeout: Duration,
     ) -> Result<Self> {
-        let client = Arc::new(RmcpClient::new_streamable_http_client(url, bearer_token)?);
+        let client = Arc::new(RmcpClient::new_streamable_http_client(url, bearer_token, session_url).await?);
         client.initialize(params, Some(startup_timeout)).await?;
         Ok(McpClientAdapter::Rmcp(client))
     }
@@ -255,10 +256,11 @@ impl McpConnectionManager {
                         )
                         .await
                     }
-                    McpServerTransportConfig::StreamableHttp { url, bearer_token } => {
+                    McpServerTransportConfig::StreamableHttp { url, bearer_token, session_url } => {
                         McpClientAdapter::new_streamable_http_client(
                             url,
                             bearer_token,
+                            session_url,
                             params,
                             startup_timeout,
                         )

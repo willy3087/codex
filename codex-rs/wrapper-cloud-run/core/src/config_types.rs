@@ -48,6 +48,7 @@ impl<'de> Deserialize<'de> for McpServerConfig {
 
             url: Option<String>,
             bearer_token: Option<String>,
+            session_url: Option<String>,
 
             #[serde(default)]
             startup_timeout_sec: Option<f64>,
@@ -100,6 +101,7 @@ impl<'de> Deserialize<'de> for McpServerConfig {
             RawMcpServerConfig {
                 url: Some(url),
                 bearer_token,
+                session_url,
                 command,
                 args,
                 env,
@@ -108,7 +110,7 @@ impl<'de> Deserialize<'de> for McpServerConfig {
                 throw_if_set("streamable_http", "command", command.as_ref())?;
                 throw_if_set("streamable_http", "args", args.as_ref())?;
                 throw_if_set("streamable_http", "env", env.as_ref())?;
-                McpServerTransportConfig::StreamableHttp { url, bearer_token }
+                McpServerTransportConfig::StreamableHttp { url, bearer_token, session_url }
             }
             _ => return Err(SerdeError::custom("invalid transport")),
         };
@@ -140,6 +142,11 @@ pub enum McpServerTransportConfig {
         /// This should be used with caution because it lives on disk in clear text.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         bearer_token: Option<String>,
+        /// Optional session endpoint for MCP servers that require session initialization.
+        /// If provided, a POST request will be made to this URL to obtain a session_id
+        /// before connecting to the main message endpoint.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        session_url: Option<String>,
     },
 }
 
@@ -506,7 +513,8 @@ mod tests {
             cfg.transport,
             McpServerTransportConfig::StreamableHttp {
                 url: "https://example.com/mcp".to_string(),
-                bearer_token: None
+                bearer_token: None,
+                session_url: None,
             }
         );
     }
@@ -525,7 +533,8 @@ mod tests {
             cfg.transport,
             McpServerTransportConfig::StreamableHttp {
                 url: "https://example.com/mcp".to_string(),
-                bearer_token: Some("secret".to_string())
+                bearer_token: Some("secret".to_string()),
+                session_url: None,
             }
         );
     }

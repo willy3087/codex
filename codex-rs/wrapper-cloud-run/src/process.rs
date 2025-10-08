@@ -8,7 +8,6 @@ use serde_json::json;
 use std::convert::Infallible;
 use std::pin::Pin;
 use tokio::io::AsyncBufReadExt;
-use tokio::io::AsyncWriteExt;
 use tokio::io::BufReader;
 use tokio::process::Command;
 use tokio::sync::mpsc;
@@ -168,7 +167,9 @@ pub async fn run_codex_app_server_stream(req: ExecRequest) -> SseEventStream {
     use tokio::time::Duration;
     let (tx, rx) = mpsc::unbounded_channel();
     let prompt = req.prompt.clone();
-    let timeout_ms = req.timeout_ms.unwrap_or(60_000);
+    // Timeout aumentado para 180s (3 min) para operações com MCP servers remotos
+    // que precisam de mais tempo: conexão HTTP + inicialização + API calls + LLM
+    let timeout_ms = req.timeout_ms.unwrap_or(180_000);
     let session_id = req
         .session_id
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
@@ -238,7 +239,7 @@ pub async fn run_codex_app_server_stream(req: ExecRequest) -> SseEventStream {
                 child_ref: Arc<Mutex<Option<Child>>>,
                 // allow_network: bool,
                 // allow_file_operations: bool,
-                approval_policy: String,
+                _approval_policy: String,
             ) {
                 let start_time = std::time::Instant::now();
 
@@ -264,18 +265,26 @@ pub async fn run_codex_app_server_stream(req: ExecRequest) -> SseEventStream {
                     }
                 };
 
-                // Spawna o codex no modo proto
-                // O modo proto permite comunicação via stdin/stdout
+                // Spawna o codex no modo exec
+                // O modo exec é mais simples e funciona melhor no Cloud Run (sem TTY)
                 let mut cmd = Command::new(&app_server_path);
 
-                // Adiciona o comando "proto" para usar o modo de protocolo
-                cmd.arg("proto");
+                // Adiciona o comando "exec" com o prompt
+                cmd.arg("exec");
+                cmd.arg(&prompt);
 
-                // IMPORTANTE: Force full access via CLI args (o JSON sandbox_policy é ignorado!)
+                // Flags necessárias para Cloud Run
+                cmd.arg("--skip-git-repo-check");
                 cmd.arg("-c");
                 cmd.arg("sandbox_mode=danger-full-access");
 
-                cmd.stdin(std::process::Stdio::piped())
+                // Adiciona modelo se especificado
+                if !model.is_empty() && model != "gpt-4o-mini" {
+                    cmd.arg("-m");
+                    cmd.arg(&model);
+                }
+
+                cmd.stdin(std::process::Stdio::null())
                     .stdout(std::process::Stdio::piped())
                     .stderr(std::process::Stdio::piped());
 
@@ -294,9 +303,10 @@ pub async fn run_codex_app_server_stream(req: ExecRequest) -> SseEventStream {
                 }
 
                 // Passa configurações opcionais
-                if let Ok(val) = env::var("CODEX_CONFIG_PATH") {
-                    cmd.env("CODEX_CONFIG_PATH", val);
-                }
+                // Sempre passa o config.toml para que o codex encontre MCP servers configurados
+                let config_path = env::var("CODEX_CONFIG_PATH")
+                    .unwrap_or_else(|_| "/app/config.toml".to_string());
+                cmd.env("CODEX_CONFIG_PATH", config_path);
                 if let Ok(val) = env::var("RUST_LOG") {
                     cmd.env("RUST_LOG", val);
                 }
@@ -321,69 +331,13 @@ pub async fn run_codex_app_server_stream(req: ExecRequest) -> SseEventStream {
                     *locked = Some(child);
                 }
 
-                // Recupera stdin, stdout, stderr
+                // Com codex exec, não precisamos enviar JSON via stdin
+                // O prompt já foi passado como argumento na linha de comando
+                tracing::info!("Executing codex exec with prompt: {}", prompt);
+
+                // Recupera stdout, stderr
                 let mut locked = child_ref.lock().await;
                 let child = locked.as_mut().unwrap();
-                let mut stdin = match child.stdin.take() {
-                    Some(stdin) => stdin,
-                    None => {
-                        let _ =
-                            tx.send(Event::default().event("error").data("Failed to open stdin"));
-                        return;
-                    }
-                };
-
-                // Envia comando no formato Submission esperado pelo codex proto
-                // Usa UserTurn para especificar o modelo e outras configurações
-                let mut op = serde_json::Map::new();
-                op.insert("type".to_string(), json!("user_turn"));
-                op.insert(
-                    "items".to_string(),
-                    json!([
-                        {
-                            "type": "text",
-                            "text": prompt
-                        }
-                    ]),
-                );
-                op.insert("cwd".to_string(), json!("/tmp"));
-
-                // Usa os parâmetros recebidos para configurar políticas
-                op.insert("approval_policy".to_string(), json!(approval_policy));
-                // O SandboxPolicy é um enum com #[serde(tag = "mode", rename_all = "kebab-case")]
-                // Para DangerFullAccess, precisa do objeto com a tag "mode"
-                op.insert(
-                    "sandbox_policy".to_string(),
-                    json!({"mode": "danger-full-access"}),
-                );
-                op.insert("model".to_string(), json!(model));
-                // Usar "medium" como valor padrão para effort
-                op.insert("effort".to_string(), json!("medium"));
-                op.insert("summary".to_string(), json!("auto"));
-                op.insert(
-                    "final_output_json_schema".to_string(),
-                    serde_json::Value::Null,
-                );
-
-                let submission = json!({
-                    "id": "req-1",
-                    "op": serde_json::Value::Object(op)
-                });
-
-                tracing::info!("Sending submission: {}", submission);
-
-                if let Err(e) = stdin
-                    .write_all(format!("{}\n", submission).as_bytes())
-                    .await
-                {
-                    let _ = tx.send(
-                        Event::default()
-                            .event("error")
-                            .data(format!("Failed to write to stdin: {}", e)),
-                    );
-                    return;
-                }
-                let _ = stdin.flush().await;
 
                 // Preparar buffers para coleta de stdout/stderr
                 let (stdout_tx, mut stdout_rx) = mpsc::unbounded_channel::<String>();

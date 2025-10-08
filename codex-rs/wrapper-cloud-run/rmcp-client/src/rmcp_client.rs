@@ -23,6 +23,7 @@ use rmcp::service::{self};
 use rmcp::transport::StreamableHttpClientTransport;
 use rmcp::transport::child_process::TokioChildProcess;
 use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
+use serde::Deserialize;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::BufReader;
 use tokio::process::Command;
@@ -37,6 +38,43 @@ use crate::utils::convert_to_mcp;
 use crate::utils::convert_to_rmcp;
 use crate::utils::create_env_for_mcp_server;
 use crate::utils::run_with_timeout;
+
+#[derive(Debug, Deserialize)]
+struct SessionResponse {
+    session_id: String,
+}
+
+/// Initialize a session with an MCP server by calling its session endpoint.
+/// Returns the session_id to be appended to the messages URL.
+async fn initialize_server_session(session_url: &str, bearer_token: Option<&str>) -> Result<String> {
+    let client = reqwest::Client::new();
+    let mut request = client.post(session_url);
+
+    if let Some(token) = bearer_token {
+        request = request.header("Authorization", format!("Bearer {}", token));
+    }
+
+    let response = request
+        .send()
+        .await
+        .map_err(|e| anyhow!("Failed to POST to session endpoint {}: {}", session_url, e))?;
+
+    if !response.status().is_success() {
+        return Err(anyhow!(
+            "Session initialization failed with status {}: {}",
+            response.status(),
+            response.text().await.unwrap_or_default()
+        ));
+    }
+
+    let session: SessionResponse = response
+        .json()
+        .await
+        .map_err(|e| anyhow!("Failed to parse session response: {}", e))?;
+
+    info!("Initialized MCP session with ID: {}", session.session_id);
+    Ok(session.session_id)
+}
 
 enum PendingTransport {
     ChildProcess(TokioChildProcess),
@@ -103,8 +141,23 @@ impl RmcpClient {
         })
     }
 
-    pub fn new_streamable_http_client(url: String, bearer_token: Option<String>) -> Result<Self> {
-        let mut config = StreamableHttpClientTransportConfig::with_uri(url);
+    pub async fn new_streamable_http_client(
+        url: String,
+        bearer_token: Option<String>,
+        session_url: Option<String>,
+    ) -> Result<Self> {
+        // If a session_url is provided, initialize the session first
+        let final_url = if let Some(ref sess_url) = session_url {
+            let session_id = initialize_server_session(sess_url, bearer_token.as_deref()).await?;
+            // Append session_id to the messages URL
+            // Assuming URL format is like: https://host/messages/
+            // Result should be: https://host/messages/{session_id}
+            format!("{}{}", url.trim_end_matches('/'), session_id)
+        } else {
+            url
+        };
+
+        let mut config = StreamableHttpClientTransportConfig::with_uri(final_url);
         if let Some(token) = bearer_token {
             config = config.auth_header(format!("Bearer {token}"));
         }
