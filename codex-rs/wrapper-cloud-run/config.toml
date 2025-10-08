@@ -7,7 +7,12 @@
 # Usando o MCP Pipedrive via stdio (local no mesmo container)
 command = "python3.12"
 args = ["/app/mcp-servers/pipedrive/server.py"]
-env = { "TRANSPORT" = "stdio" }
+
+# Variáveis de ambiente do MCP Pipedrive
+# PIPEDRIVE_API_TOKEN deve ser definida no Cloud Run
+[mcp_servers.pipedrive.env]
+TRANSPORT = "stdio"
+# PIPEDRIVE_API_TOKEN será herdada do ambiente do Cloud Run
 
 # Timeouts
 startup_timeout_sec = 30 # Tempo para inicializar conexão
