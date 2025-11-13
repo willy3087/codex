@@ -1,0 +1,129 @@
+# Cloud Build configuration for Codex Gateway
+# This pipeline builds the Docker image and deploys to Cloud Run
+#
+# Trigger: Push to main/master branch or manual trigger
+# Output: Docker image in Artifact Registry + Cloud Run deployment
+
+steps:
+  # Step 1: Build Docker image
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'build-image'
+    args:
+      - 'build'
+      - '-t'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/codex-wrapper/wrapper:$COMMIT_SHA'
+      - '-t'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/codex-wrapper/wrapper:latest'
+      - '-f'
+      - 'codex-rs/Dockerfile'
+      - 'codex-rs'  # Build context is the codex-rs workspace
+    timeout: '1800s' # 30 minutes for Rust build
+
+  # Step 2: Push image to Artifact Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'push-image-sha'
+    args:
+      - 'push'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/codex-wrapper/wrapper:$COMMIT_SHA'
+    waitFor: ['build-image']
+
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'push-image-latest'
+    args:
+      - 'push'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/codex-wrapper/wrapper:latest'
+    waitFor: ['build-image']
+
+  # Step 3: Deploy to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: 'deploy-cloud-run'
+    entrypoint: 'gcloud'
+    args:
+      - 'run'
+      - 'services'
+      - 'update'
+      - 'wrapper'
+      - '--image=us-central1-docker.pkg.dev/$PROJECT_ID/codex-wrapper/wrapper:$COMMIT_SHA'
+      - '--region=us-central1'
+      - '--platform=managed'
+      - '--service-account=467992722695-compute@developer.gserviceaccount.com'
+      # Preserve existing configuration
+      - '--max-instances=20'
+      - '--cpu=2'
+      - '--memory=4Gi'
+      - '--timeout=300s'
+      - '--concurrency=80'
+      - '--port=8080'
+      # Environment variables (add more as needed)
+      - '--set-env-vars=RUST_LOG=info'
+      - '--set-env-vars=PORT=8080'
+      # Cloud SQL connection (preserve existing)
+      - '--set-cloudsql-instances=elaihub-prod:us-central1:sandbox'
+      # Allow unauthenticated (if public API) - adjust as needed
+      - '--allow-unauthenticated'
+    waitFor: ['push-image-sha', 'push-image-latest']
+
+  # Step 4: Verify deployment health
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: 'verify-deployment'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        # Get the service URL
+        SERVICE_URL=$(gcloud run services describe wrapper \
+          --region=us-central1 \
+          --format='value(status.url)')
+
+        echo "Service URL: $SERVICE_URL"
+
+        # Wait for service to be ready
+        sleep 10
+
+        # Health check
+        HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$SERVICE_URL/health")
+
+        if [ "$HTTP_STATUS" -eq 200 ]; then
+          echo "✅ Health check passed (HTTP $HTTP_STATUS)"
+          exit 0
+        else
+          echo "❌ Health check failed (HTTP $HTTP_STATUS)"
+          exit 1
+        fi
+    waitFor: ['deploy-cloud-run']
+
+# Images to be pushed to Artifact Registry
+images:
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/codex-wrapper/wrapper:$COMMIT_SHA'
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/codex-wrapper/wrapper:latest'
+
+# Build options
+options:
+  # Use high CPU machine for faster Rust builds
+  machineType: 'E2_HIGHCPU_8'
+
+  # Increase timeout for Rust compilation
+  timeout: '2400s' # 40 minutes total
+
+  # Use Cloud Build's Docker cache
+  substitutionOption: 'ALLOW_LOOSE'
+
+  # Logging
+  logging: CLOUD_LOGGING_ONLY
+
+  # Enable Kaniko cache (optional, for faster builds)
+  # Dynamic: true
+
+# Substitutions (can be overridden at build time)
+substitutions:
+  _DEPLOY_REGION: 'us-central1'
+  _SERVICE_NAME: 'wrapper'
+
+# Tags for organizing builds
+tags:
+  - 'codex-gateway'
+  - 'cloud-run'
+  - 'rust'
+
+# Timeout for entire build
+timeout: '2400s'

@@ -1,0 +1,153 @@
+# Cloud Run Service Configuration for Codex Gateway
+# Compatible with existing wrapper service setup
+# Project: elaihub-prod
+# Region: us-central1
+# Service Account: 467992722695-compute@developer.gserviceaccount.com
+
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: wrapper
+  namespace: '467992722695'
+  labels:
+    cloud.googleapis.com/location: us-central1
+  annotations:
+    run.googleapis.com/ingress: all
+    run.googleapis.com/ingress-status: all
+    run.googleapis.com/invoker-iam-disabled: 'true'
+    run.googleapis.com/maxScale: '20'
+spec:
+  template:
+    metadata:
+      labels:
+        run.googleapis.com/startupProbeType: Default
+      annotations:
+        autoscaling.knative.dev/maxScale: '20'
+        run.googleapis.com/cloudsql-instances: elaihub-prod:us-central1:sandbox
+        run.googleapis.com/startup-cpu-boost: 'true'
+    spec:
+      containerConcurrency: 80
+      timeoutSeconds: 300
+      serviceAccountName: 467992722695-compute@developer.gserviceaccount.com
+      containers:
+      # Main Gateway Container
+      - name: wrapper-1
+        image: us-central1-docker.pkg.dev/elaihub-prod/codex-wrapper/wrapper:latest
+        ports:
+        - name: http1
+          containerPort: 8080
+        env:
+        # Rust logging
+        - name: RUST_LOG
+          value: info,codex_gateway=debug
+
+        # Gateway configuration
+        - name: PORT
+          value: '8080'
+        - name: GATEWAY_HOST
+          value: 0.0.0.0
+        - name: REQUEST_TIMEOUT_SECS
+          value: '300'
+
+        # Body size limits (can be adjusted per endpoint)
+        - name: GATEWAY_BODY_LIMIT_DEFAULT
+          value: '2097152'  # 2MB
+        - name: GATEWAY_BODY_LIMIT_JSONRPC
+          value: '1048576'  # 1MB
+        - name: GATEWAY_BODY_LIMIT_WEBHOOK
+          value: '10485760' # 10MB
+        - name: GATEWAY_BODY_LIMIT_WEBSOCKET
+          value: '1048576'  # 1MB
+        - name: GATEWAY_BODY_LIMITS_ENABLED
+          value: 'true'
+
+        # WebSocket configuration
+        - name: GATEWAY_WEBSOCKET_MAX_CONNECTIONS
+          value: '5000'
+
+        # API Keys (from Secret Manager in production)
+        - name: GATEWAY_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: gateway-api-key
+              key: key
+
+        - name: ANTHROPIC_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: anthropic-api-key
+              key: key
+
+        # Optional: OpenAI for fallback
+        - name: OPENAI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: openai-api-key
+              key: key
+
+        # Optional: Pipedrive integration
+        - name: PIPEDRIVE_API_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: pipedrive-api-token
+              key: key
+
+        # Cloud Storage for artifacts
+        - name: GCS_BUCKET_NAME
+          value: elaihub-prod-codex-artifacts
+
+        # Firestore for sessions/API keys
+        - name: FIRESTORE_PROJECT_ID
+          value: elaihub-prod
+        - name: FIRESTORE_DATABASE_ID
+          value: (default)
+
+        resources:
+          limits:
+            cpu: 2000m
+            memory: 4Gi
+
+        startupProbe:
+          timeoutSeconds: 240
+          periodSeconds: 240
+          failureThreshold: 1
+          httpGet:
+            path: /health
+            port: 8080
+
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
+
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 2
+
+      # Optional: MCP Pipedrive Server Container (if needed)
+      # Uncomment if you want to keep the multi-container setup
+      # - name: server-1
+      #   image: us-central1-docker.pkg.dev/elaihub-prod/pipedrive-mcp/server:latest
+      #   resources:
+      #     limits:
+      #       cpu: 1000m
+      #       memory: 512Mi
+      #   env:
+      #   - name: PIPEDRIVE_API_TOKEN
+      #     valueFrom:
+      #       secretKeyRef:
+      #         name: pipedrive-api-token
+      #         key: key
+
+  traffic:
+  - percent: 100
+    latestRevision: true

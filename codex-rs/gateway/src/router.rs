@@ -5,10 +5,14 @@ use crate::handlers::health::health_check;
 use crate::handlers::jsonrpc::handle_jsonrpc;
 use crate::handlers::webhook::handle_webhook;
 use crate::handlers::websocket::handle_websocket_upgrade;
+use crate::middleware::api_key::api_key_middleware;
+use crate::middleware::api_key::ApiKeyAuth;
 use crate::state::AppState;
+use axum::middleware;
 use axum::Router;
 use axum::routing::get;
 use axum::routing::post;
+use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::timeout::TimeoutLayer;
@@ -16,7 +20,7 @@ use tower_http::trace::TraceLayer;
 use tracing::info;
 
 /// Create the main application router with all routes and middleware
-pub fn create_router(state: AppState) -> GatewayResult<Router> {
+pub async fn create_router(state: AppState) -> GatewayResult<Router> {
     info!("Creating router with configured routes and middleware");
 
     // Store config values before moving state
@@ -25,6 +29,10 @@ pub fn create_router(state: AppState) -> GatewayResult<Router> {
     let health_limit = state.config().body_limits.health_limit;
     let jsonrpc_limit = state.config().body_limits.jsonrpc_limit;
     let webhook_limit = state.config().body_limits.webhook_limit;
+
+    // Initialize API Key authentication
+    let api_key_auth = Arc::new(ApiKeyAuth::default_config().await);
+    info!("API Key authentication initialized");
 
     // Configure CORS - allow all origins for now, can be restricted later
     let cors = CorsLayer::permissive();
@@ -40,7 +48,7 @@ pub fn create_router(state: AppState) -> GatewayResult<Router> {
 
     // Build the router with all routes and middleware
     let app = Router::new()
-        // Health check endpoint
+        // Health check endpoint (no auth required)
         .route("/health", get(health_check))
         // JSON-RPC endpoint for protocol communication
         .route("/jsonrpc", post(handle_jsonrpc))
@@ -49,6 +57,10 @@ pub fn create_router(state: AppState) -> GatewayResult<Router> {
         // Webhook endpoint for external integrations
         .route("/webhook", post(handle_webhook))
         // Apply global middleware stack in correct order
+        .layer(middleware::from_fn(move |req, next| {
+            let auth = Arc::clone(&api_key_auth);
+            api_key_middleware(auth, req, next)
+        })) // API Key authentication
         .layer(global_body_limit) // Global body size limit fallback
         .layer(trace) // Request tracing
         .layer(timeout) // Request timeout
@@ -64,6 +76,7 @@ pub fn create_router(state: AppState) -> GatewayResult<Router> {
         webhook_limit / 1024,
         default_limit / 1024
     );
+    info!("API Key authentication middleware enabled");
     Ok(app)
 }
 
@@ -76,7 +89,7 @@ mod tests {
     async fn test_create_router() -> Result<(), Box<dyn std::error::Error>> {
         let config = GatewayConfig::default();
         let state = AppState::new(config).await?;
-        let _router = create_router(state)?;
+        let _router = create_router(state).await?;
         // Se chegou até aqui, o router foi criado com sucesso
         Ok(())
     }

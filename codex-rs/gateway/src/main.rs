@@ -40,8 +40,8 @@ async fn run() -> GatewayResult<()> {
     // Create application state
     let state = AppState::new(config.clone()).await?;
 
-    // Create router with all routes and middleware
-    let app = create_router(state)?;
+    // Create router with all routes and middleware (now async)
+    let app = create_router(state).await?;
 
     // Parse server address from config
     let addr = SocketAddr::from(([0, 0, 0, 0], config.port));
