@@ -23,7 +23,6 @@ spec:
         run.googleapis.com/startupProbeType: Default
       annotations:
         autoscaling.knative.dev/maxScale: '20'
-        run.googleapis.com/cloudsql-instances: elaihub-prod:us-central1:sandbox
         run.googleapis.com/startup-cpu-boost: 'true'
     spec:
       containerConcurrency: 80

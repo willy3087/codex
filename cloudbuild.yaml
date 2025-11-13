@@ -57,8 +57,6 @@ steps:
       # Environment variables (add more as needed)
       - '--set-env-vars=RUST_LOG=info'
       - '--set-env-vars=PORT=8080'
-      # Cloud SQL connection (preserve existing)
-      - '--set-cloudsql-instances=elaihub-prod:us-central1:sandbox'
       # Allow unauthenticated (if public API) - adjust as needed
       - '--allow-unauthenticated'
     waitFor: ['push-image-sha', 'push-image-latest']

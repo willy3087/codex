@@ -132,7 +132,6 @@ gcloud run services update "${SERVICE_NAME}" \
     --timeout=300s \
     --concurrency=80 \
     --port=8080 \
-    --set-cloudsql-instances=elaihub-prod:us-central1:sandbox \
     --set-env-vars="RUST_LOG=info,codex_gateway=debug" \
     --set-env-vars="PORT=8080" \
     --allow-unauthenticated
