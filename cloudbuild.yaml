@@ -15,8 +15,9 @@ steps:
       - '-t'
       - 'us-central1-docker.pkg.dev/$PROJECT_ID/codex-wrapper/wrapper:latest'
       - '-f'
-      - 'codex-rs/Dockerfile'
-      - 'codex-rs'  # Build context is the codex-rs workspace
+      - 'Dockerfile'  # Dockerfile is in the build context root
+      - '.'  # Build context is current directory (codex-rs)
+    dir: 'codex-rs'  # Change to codex-rs directory first
     timeout: '1800s' # 30 minutes for Rust build
 
   # Step 2: Push image to Artifact Registry
