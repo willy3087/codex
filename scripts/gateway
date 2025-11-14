@@ -1,0 +1,110 @@
+#!/bin/bash
+# Wrapper script para o Codex Gateway CLI
+
+set -euo pipefail
+
+# Cores
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+NC='\033[0m' # No Color
+
+# Configurações
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CLI_SCRIPT="$SCRIPT_DIR/gateway_cli.py"
+
+# Gateway URL padrão
+export GATEWAY_URL="${GATEWAY_URL:-https://wrapper-uamdjcvg7q-uc.a.run.app}"
+
+# Função para exibir ajuda
+show_help() {
+    cat << EOF
+🚀 Codex Gateway CLI
+
+USAGE:
+    gateway [OPTIONS]
+
+OPTIONS:
+    -h, --help          Mostra esta mensagem de ajuda
+    -u, --url URL       Define a URL do gateway (padrão: $GATEWAY_URL)
+    -k, --key KEY       Define a API key manualmente
+    --health            Verifica saúde do gateway e sai
+
+ENVIRONMENT VARIABLES:
+    GATEWAY_URL         URL do gateway (padrão: https://wrapper-uamdjcvg7q-uc.a.run.app)
+    GATEWAY_KEY         API Key para autenticação
+
+EXAMPLES:
+    # Uso básico (usa secret manager automaticamente)
+    gateway
+
+    # Com API key manual
+    gateway --key "sua-api-key"
+
+    # Com URL customizada
+    gateway --url "https://outro-gateway.run.app"
+
+    # Verificar saúde
+    gateway --health
+
+EOF
+}
+
+# Função para health check
+health_check() {
+    echo -e "${YELLOW}🔍 Verificando saúde do gateway...${NC}"
+
+    RESPONSE=$(curl -s "${GATEWAY_URL}/health" || echo "error")
+
+    if [ "$RESPONSE" = "error" ]; then
+        echo -e "${RED}❌ Gateway inacessível${NC}"
+        exit 1
+    fi
+
+    STATUS=$(echo "$RESPONSE" | jq -r '.status' 2>/dev/null || echo "unknown")
+
+    if [ "$STATUS" = "healthy" ]; then
+        echo -e "${GREEN}✅ Gateway está saudável${NC}"
+        echo -e "📡 URL: $GATEWAY_URL"
+        exit 0
+    else
+        echo -e "${RED}❌ Gateway não está saudável${NC}"
+        echo -e "📦 Resposta: $RESPONSE"
+        exit 1
+    fi
+}
+
+# Parse argumentos
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -h|--help)
+            show_help
+            exit 0
+            ;;
+        -u|--url)
+            export GATEWAY_URL="$2"
+            shift 2
+            ;;
+        -k|--key)
+            export GATEWAY_KEY="$2"
+            shift 2
+            ;;
+        --health)
+            health_check
+            ;;
+        *)
+            echo -e "${RED}❌ Argumento desconhecido: $1${NC}"
+            echo "Use 'gateway --help' para ver opções disponíveis"
+            exit 1
+            ;;
+    esac
+done
+
+# Verificar se Python está instalado
+if ! command -v python3 &> /dev/null; then
+    echo -e "${RED}❌ Python 3 não encontrado. Por favor instale Python 3.${NC}"
+    exit 1
+fi
+
+# Executar o CLI
+exec python3 "$CLI_SCRIPT"

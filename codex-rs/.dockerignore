@@ -14,9 +14,9 @@ docs/
 *.md
 !GCP_DEPLOYMENT.md
 
-# Tests
-tests/
-**/tests/
+# Tests (keep test workspace members for cargo)
+# tests/
+# **/tests/
 *.test
 *_test.rs
 

@@ -44,12 +44,12 @@ venv/
 .DS_Store
 
 # Tests
-**/tests/
+# **/tests/ # Comentado - workspace members precisam de tests/
 *.test
 
 # Documentation
 docs/
-*.md
+# *.md # Comentado - arquivos .md são usados no build via include_str!()
 !README.md
 !GCP_DEPLOYMENT.md
 

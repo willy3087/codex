@@ -54,6 +54,15 @@ COPY stdio-to-uds ./stdio-to-uds/
 COPY otel ./otel/
 COPY tui ./tui/
 COPY utils ./utils/
+COPY windows-sandbox-rs ./windows-sandbox-rs/
+COPY chatgpt ./chatgpt/
+COPY cloud-cli ./cloud-cli/
+COPY code ./code/
+
+# Copy additional configuration files
+COPY rust-toolchain.toml ./
+COPY rustfmt.toml ./
+COPY clippy.toml ./
 
 # Build the gateway in release mode with optimizations
 RUN cargo build --release --package codex-gateway

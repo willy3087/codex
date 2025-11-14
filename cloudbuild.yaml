@@ -41,8 +41,7 @@ steps:
     entrypoint: 'gcloud'
     args:
       - 'run'
-      - 'services'
-      - 'update'
+      - 'deploy'
       - 'wrapper'
       - '--image=us-central1-docker.pkg.dev/$PROJECT_ID/codex-wrapper/wrapper:$COMMIT_SHA'
       - '--region=us-central1'
@@ -99,7 +98,7 @@ images:
 # Build options
 options:
   # Use high CPU machine for faster Rust builds
-  machineType: 'E2_HIGHCPU_8'
+  machineType: 'E2_HIGHCPU_32'
 
   # Use Cloud Build's Docker cache
   substitutionOption: 'ALLOW_LOOSE'

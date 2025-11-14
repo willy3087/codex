@@ -157,6 +157,16 @@ O Codex Gateway é uma implementação cloud-native em Rust que atua como gatewa
 
 ## 🚀 Guia de Deployment
 
+### ✅ Status da Produção Atual
+
+```
+🟢 Cloud Run: https://wrapper-467992722695.us-central1.run.app
+🟢 Imagem: us-central1-docker.pkg.dev/elaihub-prod/codex-wrapper/wrapper:486a13c9
+🟢 Firestore: (default) - FIRESTORE_NATIVE
+🟢 Storage: elaihub-prod-codex-artifacts
+🟢 Secrets: gateway-api-key, anthropic-api-key, openai-api-key, pipedrive-api-token
+```
+
 ### Pré-requisitos
 
 ```bash
@@ -164,14 +174,14 @@ O Codex Gateway é uma implementação cloud-native em Rust que atua como gatewa
 curl https://sdk.cloud.google.com | bash
 exec -l $SHELL
 
-# 2. Authenticate
+# 2. Authenticate (usar adm@nexcode.live)
 gcloud auth login
-gcloud auth application-default login
+gcloud config set account adm@nexcode.live
 
 # 3. Set project
 gcloud config set project elaihub-prod
 
-# 4. Enable required APIs
+# 4. Enable required APIs (JÁ HABILITADAS)
 gcloud services enable \
   run.googleapis.com \
   cloudbuild.googleapis.com \
@@ -181,10 +191,25 @@ gcloud services enable \
   storage.googleapis.com
 ```
 
-### Opção 1: Deploy Manual
+### Opção 1: Deploy via Cloud Build (Recomendado para Produção)
 
 ```bash
-# 1. Build imagem Docker localmente
+# 1. Trigger build e deploy automatizado
+gcloud builds submit --config=cloudbuild.yaml
+
+# Acompanhar logs
+gcloud builds log $(gcloud builds list --limit=1 --format="value(id)")
+```
+
+**Configuração do Cloud Build**:
+- Machine: E2_HIGHCPU_32 (32 vCPUs, 32GB RAM)
+- Timeout: 40 minutos
+- Steps: Build Docker → Push → Deploy → Health Check
+
+### Opção 2: Deploy Manual com Docker Local
+
+```bash
+# 1. Build imagem Docker localmente (apenas para testing local ARM64)
 cd codex-rs
 docker build -t us-central1-docker.pkg.dev/elaihub-prod/codex-wrapper/wrapper:latest .
 
@@ -197,26 +222,27 @@ gcloud run deploy wrapper \
   --image=us-central1-docker.pkg.dev/elaihub-prod/codex-wrapper/wrapper:latest \
   --region=us-central1 \
   --platform=managed \
-  --allow-unauthenticated \
+  --service-account=467992722695-compute@developer.gserviceaccount.com \
   --max-instances=20 \
   --cpu=2 \
-  --memory=4Gi
+  --memory=4Gi \
+  --timeout=300s \
+  --concurrency=80 \
+  --port=8080 \
+  --set-env-vars="RUST_LOG=info,codex_gateway=debug,GCP_PROJECT=elaihub-prod,FIRESTORE_DATABASE=(default),STORAGE_BUCKET=elaihub-prod-codex-artifacts,GATEWAY_API_KEY_SECRET=projects/467992722695/secrets/gateway-api-key/versions/latest"
 ```
 
-### Opção 2: Deploy Automatizado (Recomendado)
+### Opção 3: Deploy com Script Automático
 
 ```bash
-# Usar script de deploy
+# Usar script de deploy (atualizado com env vars)
 ./scripts/deploy.sh prod latest
 ```
 
-### Opção 3: CI/CD com Cloud Build
+### Opção 4: CI/CD com Cloud Build Trigger
 
 ```bash
-# Trigger manual
-gcloud builds submit --config=cloudbuild.yaml
-
-# Ou configurar trigger automático no GitHub
+# Configurar trigger automático no GitHub (se necessário)
 gcloud builds triggers create github \
   --repo-name=codex \
   --repo-owner=your-org \
@@ -226,7 +252,102 @@ gcloud builds triggers create github \
 
 ## 🔧 Configuração da Infraestrutura
 
-### 1. Provisionar com Terraform
+### 1. Infraestrutura Criada (Comandos Executados em Produção)
+
+```bash
+# 1. Habilitar APIs
+gcloud services enable \
+  firestore.googleapis.com \
+  secretmanager.googleapis.com \
+  storage.googleapis.com
+
+# 2. Firestore Database (JÁ EXISTE)
+# gcloud firestore databases create --database="(default)" \
+#   --location=us-central1 --type=firestore-native
+
+# 3. Cloud Storage Bucket
+gcloud storage buckets create gs://elaihub-prod-codex-artifacts \
+  --location=us-central1 \
+  --uniform-bucket-level-access
+
+# 4. Criar Secrets
+echo -n "temp-gateway-key-$(openssl rand -hex 16)" | \
+  gcloud secrets create gateway-api-key --data-file=- --replication-policy="automatic"
+
+# Secrets já existentes: anthropic-api-key, openai-api-key, pipedrive-api-token
+
+# 5. Permissões IAM para o Service Account
+SERVICE_ACCOUNT="467992722695-compute@developer.gserviceaccount.com"
+
+# Secret access
+gcloud secrets add-iam-policy-binding gateway-api-key \
+  --member="serviceAccount:${SERVICE_ACCOUNT}" \
+  --role="roles/secretmanager.secretAccessor"
+
+gcloud secrets add-iam-policy-binding anthropic-api-key \
+  --member="serviceAccount:${SERVICE_ACCOUNT}" \
+  --role="roles/secretmanager.secretAccessor"
+
+# Storage access
+gcloud storage buckets add-iam-policy-binding gs://elaihub-prod-codex-artifacts \
+  --member="serviceAccount:${SERVICE_ACCOUNT}" \
+  --role="roles/storage.objectAdmin"
+```
+
+### 2. Configurar API Keys
+
+```bash
+# Obter a API key do gateway
+gcloud secrets versions access latest --secret=gateway-api-key
+
+# Atualizar API keys (se necessário)
+echo -n "sua-chave-real" | \
+  gcloud secrets versions add anthropic-api-key --data-file=-
+
+echo -n "sua-chave-openai" | \
+  gcloud secrets versions add openai-api-key --data-file=-
+```
+
+### 3. Testar o Deploy
+
+```bash
+# Service URL
+SERVICE_URL="https://wrapper-467992722695.us-central1.run.app"
+
+# 1. Health check (público, sem autenticação)
+curl $SERVICE_URL/health
+
+# Resposta esperada:
+# {"status":"healthy"}
+
+# 2. Obter API key
+GATEWAY_KEY=$(gcloud secrets versions access latest --secret=gateway-api-key)
+
+# 3. Test JSON-RPC API (requer autenticação)
+curl -X POST $SERVICE_URL/jsonrpc \
+  -H "X-API-Key: $GATEWAY_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "exec",
+    "params": {
+      "command": "echo",
+      "args": ["Hello from Codex Gateway"]
+    },
+    "id": 1
+  }'
+
+# 4. Test WebSocket upgrade
+curl -i -N \
+  -H "X-API-Key: $GATEWAY_KEY" \
+  -H "Connection: Upgrade" \
+  -H "Upgrade: websocket" \
+  -H "Sec-WebSocket-Version: 13" \
+  -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" \
+  $SERVICE_URL/ws
+```
+
+### 4. Alternativa: Provisionar com Terraform (Opcional)
 
 ```bash
 cd terraform
@@ -234,44 +355,16 @@ cd terraform
 # Initialize
 terraform init
 
-# Plan
+# Plan (verá que alguns recursos já existem)
 terraform plan
 
-# Apply
+# Import recursos existentes para o state do Terraform
+terraform import google_firestore_database.main "(default)"
+terraform import google_storage_bucket.artifacts elaihub-prod-codex-artifacts
+terraform import google_secret_manager_secret.gateway_api_key projects/467992722695/secrets/gateway-api-key
+
+# Apply (criará apenas recursos faltantes)
 terraform apply
-
-# Configure secrets
-echo -n "your-api-key" | \
-  gcloud secrets versions add anthropic-api-key --data-file=-
-```
-
-### 2. Configurar API Keys
-
-```bash
-# Generate API key
-openssl rand -base64 32
-
-# Add to Secret Manager
-echo -n "generated-key" | \
-  gcloud secrets versions add gateway-api-key --data-file=-
-```
-
-### 3. Testar o Deploy
-
-```bash
-# Get service URL
-SERVICE_URL=$(gcloud run services describe wrapper \
-  --region=us-central1 \
-  --format='value(status.url)')
-
-# Health check
-curl $SERVICE_URL/health
-
-# Test API (with API key)
-curl -H "X-API-Key: your-api-key" \
-     -H "Content-Type: application/json" \
-     -d '{"jsonrpc":"2.0","method":"conversation.prompt","params":{"prompt":"Hello"},"id":1}' \
-     $SERVICE_URL/jsonrpc
 ```
 
 ## 📈 Monitoramento e Observabilidade
@@ -364,14 +457,17 @@ gcloud logging read "resource.labels.service_name=wrapper AND severity>=ERROR"
 
 ## 📝 Checklist de Deploy
 
-- [ ] Habilitar APIs necessárias
-- [ ] Criar Artifact Registry repository
-- [ ] Provisionar infraestrutura com Terraform
-- [ ] Configurar secrets no Secret Manager
-- [ ] Build e push da imagem Docker
-- [ ] Deploy do Cloud Run service
-- [ ] Testar health check
-- [ ] Testar API endpoints
+- [x] Habilitar APIs necessárias ✅
+- [x] Criar Artifact Registry repository ✅
+- [x] Provisionar infraestrutura (Firestore, Storage, Secrets) ✅
+- [x] Configurar secrets no Secret Manager ✅
+- [x] Build e push da imagem Docker ✅
+- [x] Deploy do Cloud Run service ✅
+- [x] Testar health check ✅
+- [x] Configurar variáveis de ambiente ✅
+- [x] Permissões IAM configuradas ✅
+- [ ] Testar todos os API endpoints (JSON-RPC, WebSocket, Webhook)
+- [ ] Atualizar secrets com valores de produção reais
 - [ ] Configurar domínio customizado (opcional)
 - [ ] Configurar alertas de monitoring
 - [ ] Documentar API keys para o time
@@ -389,6 +485,8 @@ A arquitetura GCP do Codex Gateway oferece:
 
 ---
 
-**Última Atualização**: 2025-01-13
-**Versão**: 1.0.0
+**Última Atualização**: 2025-01-13 (Deploy Produção Completo)
+**Versão**: 1.1.0
+**Status**: 🟢 Em Produção
 **Maintainer**: DevOps Team
+**Service URL**: https://wrapper-467992722695.us-central1.run.app

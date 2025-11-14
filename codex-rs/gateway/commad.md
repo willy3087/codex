@@ -1,4 +1,3 @@
-
 # 📚 DOCUMENTAÇÃO COMPLETA DA API GATEWAY CODEX
 
 ## 🎯 **VISÃO GERAL**
@@ -9,12 +8,36 @@ Gateway HTTP/WebSocket que serve como fundação para todos os serviços Codex, 
 
 ## 🚀 **INICIANDO O GATEWAY**
 
-### **Comando de Execução**
+### **Ambiente de Desenvolvimento (Local)**
 
 ```bash
 cd codex-rs
 cargo run --package codex-gateway
 ```
+
+### **Ambiente de Produção (GCP Cloud Run)**
+
+```bash
+# Service URL de Produção
+export GATEWAY_URL="https://wrapper-uamdjcvg7q-uc.a.run.app"
+
+# Obter API Key do Secret Manager
+export GATEWAY_KEY=$(gcloud secrets versions access latest --secret=gateway-api-key)
+
+# Verificar status do serviço
+gcloud run services describe wrapper --region=us-central1 --format=json
+
+# Ver logs em tempo real
+gcloud run services logs tail wrapper --region=us-central1
+```
+
+**Status Atual**:
+
+- 🟢 **URL**: https://wrapper-uamdjcvg7q-uc.a.run.app
+- 🟢 **Region**: us-central1
+- 🟢 **Image**: us-central1-docker.pkg.dev/elaihub-prod/codex-wrapper/wrapper:486a13c9
+- 🟢 **Auto-scaling**: 0-20 instâncias
+- 🟢 **Resources**: 2 vCPU, 4GB RAM
 
 ### **Configuração via Environment Variables**
 
@@ -56,10 +79,17 @@ export GATEWAY_WEBSOCKET_TIMEOUT_SECS=300
 
 Endpoint para verificação de saúde do sistema.
 
-**Request:**
+**Request Local:**
 
 ```bash
 curl -X GET http://localhost:8080/health
+```
+
+**Request Produção:**
+
+```bash
+# Não requer autenticação
+curl -X GET https://wrapper-uamdjcvg7q-uc.a.run.app/health
 ```
 
 **Response Success (200 OK):**
@@ -94,10 +124,31 @@ Endpoint principal para comandos Codex via protocolo JSON-RPC 2.0 com **integra�
 
 Executa um prompt de IA usando o Codex real.
 
-**Request:**
+**Request Local:**
 
 ```bash
 curl -X POST http://localhost:8080/jsonrpc \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "conversation.prompt",
+    "params": {
+      "prompt": "Write a Rust function that adds two numbers",
+      "session_id": "my-session-123"
+    },
+    "id": 1
+  }'
+```
+
+**Request Produção (requer API Key):**
+
+```bash
+# Obter API key
+GATEWAY_KEY=$(gcloud secrets versions access latest --secret=gateway-api-key)
+
+# Fazer request
+curl -X POST https://wrapper-uamdjcvg7q-uc.a.run.app/jsonrpc \
+  -H "X-API-Key: a44c72cf24f7dcd1012bf8e7a2693b9c7385981cede7b95699fc4249285fb2ff" \
   -H "Content-Type: application/json" \
   -d '{
     "jsonrpc": "2.0",
@@ -157,10 +208,26 @@ curl -X POST http://localhost:8080/jsonrpc \
 
 Obtém o status de uma sessão/conversação ativa.
 
-**Request:**
+**Request Local:**
 
 ```bash
 curl -X POST http://localhost:8080/jsonrpc \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "conversation.status",
+    "params": {
+      "session_id": "my-session-123"
+    },
+    "id": 2
+  }'
+```
+
+**Request Produção:**
+
+```bash
+curl -X POST https://wrapper-uamdjcvg7q-uc.a.run.app/jsonrpc \
+  -H "X-API-Key: $GATEWAY_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "jsonrpc": "2.0",
@@ -207,10 +274,26 @@ curl -X POST http://localhost:8080/jsonrpc \
 
 Cancela uma sessão/conversação ativa.
 
-**Request:**
+**Request Local:**
 
 ```bash
 curl -X POST http://localhost:8080/jsonrpc \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "conversation.cancel",
+    "params": {
+      "session_id": "my-session-123"
+    },
+    "id": 3
+  }'
+```
+
+**Request Produção:**
+
+```bash
+curl -X POST https://wrapper-uamdjcvg7q-uc.a.run.app/jsonrpc \
+  -H "X-API-Key: $GATEWAY_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "jsonrpc": "2.0",
@@ -307,7 +390,7 @@ curl -X POST http://localhost:8080/jsonrpc \
 
 Endpoint para conexões WebSocket persistentes.
 
-**WebSocket Handshake:**
+**WebSocket Local:**
 
 ```bash
 # Usando curl (apenas para teste de upgrade)
@@ -319,11 +402,28 @@ curl -i -N \
   http://localhost:8080/ws
 ```
 
+**WebSocket Produção:**
+
+```bash
+# Usando curl (requer API Key)
+curl -i -N \
+  -H "X-API-Key: a44c72cf24f7dcd1012bf8e7a2693b9c7385981cede7b95699fc4249285fb2ff"" \
+  -H "Connection: Upgrade" \
+  -H "Upgrade: websocket" \
+  -H "Sec-WebSocket-Version: 13" \
+  -H "Sec-WebSocket-Key: x3JJHMbDL1EzLkh9GBhXDw==" \
+  https://wrapper-uamdjcvg7q-uc.a.run.app/ws
+```
+
 **Usando wscat:**
 
 ```bash
-# Instalar wscat: npm install -g wscat
+# Local
 wscat -c ws://localhost:8080/ws
+
+# Produção (com API Key)
+wscat -c wss://wrapper-467992722695.us-central1.run.app/ws \
+  -H "X-API-Key: $GATEWAY_KEY"
 ```
 
 **Response Success (101 Switching Protocols):**
@@ -370,10 +470,36 @@ ws.onmessage = function(event) {
 
 Endpoint para receber webhooks de serviços externos (GitHub, etc.).
 
-**Request:**
+**Request Local:**
 
 ```bash
 curl -X POST http://localhost:8080/webhook \
+  -H "Content-Type: application/json" \
+  -H "X-GitHub-Event: push" \
+  -d '{
+    "ref": "refs/heads/main",
+    "repository": {
+      "name": "codex-project",
+      "full_name": "user/codex-project"
+    },
+    "commits": [
+      {
+        "id": "abc123",
+        "message": "Add new feature",
+        "author": {
+          "name": "Developer",
+          "email": "dev@example.com"
+        }
+      }
+    ]
+  }'
+```
+
+**Request Produção:**
+
+```bash
+curl -X POST https://wrapper-uamdjcvg7q-uc.a.run.app/webhook \
+  -H "X-API-Key: a44c72cf24f7dcd1012bf8e7a2693b9c7385981cede7b95699fc4249285fb2ff" \
   -H "Content-Type: application/json" \
   -H "X-GitHub-Event: push" \
   -d '{
@@ -536,11 +662,11 @@ Access-Control-Max-Age: 3600
 
 ## 🧪 **TESTES E VALIDAÇÃO**
 
-### **Script de Teste Completo**
+### **Script de Teste - Ambiente Local**
 
 ```bash
 #!/bin/bash
-# Teste todos os endpoints com integração real ao Codex
+# Teste todos os endpoints com integração real ao Codex (LOCAL)
 
 BASE_URL="http://localhost:8080"
 
@@ -572,8 +698,67 @@ curl -s -X POST "$BASE_URL/jsonrpc" \
     "id": 2
   }' | jq
 
+echo -e "\n4. Testando WebSocket Upgrade..."
+curl -i -N \
+  -H "Connection: Upgrade" \
+  -H "Upgrade: websocket" \
+  -H "Sec-WebSocket-Version: 13" \
+  -H "Sec-WebSocket-Key: dGVzdA==" \
+  "$BASE_URL/ws" | head -10
+
+echo -e "\n5. Testando Webhook..."
+curl -s -X POST "$BASE_URL/webhook" \
+  -H "Content-Type: application/json" \
+  -d '{"event": "test", "data": "webhook test"}' | jq
+```
+
+### **Script de Teste - Produção GCP**
+
+```bash
+#!/bin/bash
+# Teste todos os endpoints em PRODUÇÃO (GCP Cloud Run)
+
+# Configuração
+GATEWAY_URL="https://wrapper-uamdjcvg7q-uc.a.run.app"
+GATEWAY_KEY=$(gcloud secrets versions access latest --secret=gateway-api-key)
+
+echo "Testing Codex Gateway in PRODUCTION (GCP Cloud Run)"
+echo "URL: $GATEWAY_URL"
+echo ""
+
+echo "1. Testando Health Check (público)..."
+curl -s "$GATEWAY_URL/health" | jq
+
+echo -e "\n2. Testando JSON-RPC - conversation.prompt (com API Key)..."
+curl -s -X POST "$GATEWAY_URL/jsonrpc" \
+  -H "X-API-Key: $GATEWAY_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "conversation.prompt",
+    "params": {
+      "prompt": "Write a Rust function that adds two numbers",
+      "session_id": "prod-test-session-001"
+    },
+    "id": 1
+  }' | jq
+
+echo -e "\n3. Testando JSON-RPC - conversation.status..."
+curl -s -X POST "$GATEWAY_URL/jsonrpc" \
+  -H "X-API-Key: $GATEWAY_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "conversation.status",
+    "params": {
+      "session_id": "prod-test-session-001"
+    },
+    "id": 2
+  }' | jq
+
 echo -e "\n4. Testando JSON-RPC - método inválido..."
-curl -s -X POST "$BASE_URL/jsonrpc" \
+curl -s -X POST "$GATEWAY_URL/jsonrpc" \
+  -H "X-API-Key: $GATEWAY_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "jsonrpc": "2.0",
@@ -583,21 +768,51 @@ curl -s -X POST "$BASE_URL/jsonrpc" \
 
 echo -e "\n5. Testando WebSocket Upgrade..."
 curl -i -N \
+  -H "X-API-Key: $GATEWAY_KEY" \
   -H "Connection: Upgrade" \
   -H "Upgrade: websocket" \
   -H "Sec-WebSocket-Version: 13" \
   -H "Sec-WebSocket-Key: dGVzdA==" \
-  "$BASE_URL/ws" | head -10
+  "$GATEWAY_URL/ws" | head -10
 
 echo -e "\n6. Testando Webhook..."
-curl -s -X POST "$BASE_URL/webhook" \
+curl -s -X POST "$GATEWAY_URL/webhook" \
+  -H "X-API-Key: $GATEWAY_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"event": "test", "data": "webhook test"}' | jq
+  -d '{"event": "test", "data": "webhook test from production"}' | jq
 
-echo -e "\n7. Testando Body Size Limit..."
-curl -s -X POST "$BASE_URL/jsonrpc" \
+echo -e "\n7. Testando autenticação sem API Key (deve falhar)..."
+curl -s -X POST "$GATEWAY_URL/jsonrpc" \
   -H "Content-Type: application/json" \
-  -d "$(printf '{"jsonrpc": "2.0", "method": "conversation.prompt", "params": {"prompt": "%*s"}, "id": 1}' 1048577 "")" | jq
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "conversation.prompt",
+    "params": {"prompt": "test"},
+    "id": 1
+  }' | jq
+
+echo -e "\nTestes completos!"
+```
+
+### **Comandos de Monitoramento - Produção**
+
+```bash
+# Ver logs em tempo real
+gcloud run services logs tail wrapper --region=us-central1
+
+# Ver últimos 50 logs
+gcloud run services logs read wrapper --region=us-central1 --limit=50
+
+# Filtrar apenas erros
+gcloud logging read "resource.labels.service_name=wrapper AND severity>=ERROR" \
+  --limit=20 --format=json
+
+# Verificar métricas
+gcloud run services describe wrapper --region=us-central1 --format=json | \
+  jq '.status.conditions'
+
+# Ver informações do serviço
+gcloud run services describe wrapper --region=us-central1
 ```
 
 ---
@@ -607,10 +822,25 @@ curl -s -X POST "$BASE_URL/jsonrpc" \
 ### **Inicialização**
 
 ```bash
+# Local
 cargo run --package codex-gateway
+
+# Produção (GCP Cloud Run)
+# Gerenciado automaticamente pelo Cloud Run
+# URL: https://wrapper-uamdjcvg7q-uc.a.run.app
 ```
 
-### **Endpoints Básicos**
+### **Variáveis de Ambiente para Produção**
+
+```bash
+# Service URL
+export GATEWAY_URL="https://wrapper-uamdjcvg7q-uc.a.run.app"
+
+# API Key (obter do Secret Manager)
+export GATEWAY_KEY=$(gcloud secrets versions access latest --secret=gateway-api-key)
+```
+
+### **Endpoints Básicos - Local**
 
 ```bash
 # Health Check
@@ -628,8 +858,37 @@ curl -X POST http://localhost:8080/jsonrpc \
     "id": 1
   }'
 
+# WebSocket
+wscat -c ws://localhost:8080/ws
+
+# Webhook
+curl -X POST http://localhost:8080/webhook \
+  -H "Content-Type: application/json" \
+  -d '{"event": "test"}'
+```
+
+### **Endpoints Básicos - Produção**
+
+```bash
+# Health Check (público, sem auth)
+curl https://wrapper-uamdjcvg7q-uc.a.run.app/health
+
+# JSON-RPC - Executar prompt de IA (requer API Key)
+curl -X POST https://wrapper-uamdjcvg7q-uc.a.run.app/jsonrpc \
+  -H "X-API-Key: $GATEWAY_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "conversation.prompt",
+    "params": {
+      "prompt": "Write a hello world in Python"
+    },
+    "id": 1
+  }'
+
 # JSON-RPC - Verificar status
-curl -X POST http://localhost:8080/jsonrpc \
+curl -X POST https://wrapper-uamdjcvg7q-uc.a.run.app/jsonrpc \
+  -H "X-API-Key: $GATEWAY_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "jsonrpc": "2.0",
@@ -641,7 +900,8 @@ curl -X POST http://localhost:8080/jsonrpc \
   }'
 
 # JSON-RPC - Cancelar conversação
-curl -X POST http://localhost:8080/jsonrpc \
+curl -X POST https://wrapper-uamdjcvg7q-uc.a.run.app/jsonrpc \
+  -H "X-API-Key: $GATEWAY_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "jsonrpc": "2.0",
@@ -652,11 +912,15 @@ curl -X POST http://localhost:8080/jsonrpc \
     "id": 3
   }'
 
-# WebSocket
-wscat -c ws://localhost:8080/ws
+# WebSocket (requer API Key)
+wscat -c wss://wrapper-467992722695.us-central1.run.app/ws \
+  -H "X-API-Key: $GATEWAY_KEY"
 
-# Webhook
-curl -X POST http://localhost:8080/webhook -H "Content-Type: application/json" -d '{"event": "test"}'
+# Webhook (requer API Key)
+curl -X POST https://wrapper-uamdjcvg7q-uc.a.run.app/webhook \
+  -H "X-API-Key: $GATEWAY_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"event": "test"}'
 ```
 
 ### **Configuração**
@@ -738,6 +1002,7 @@ cargo test --package codex-gateway --test execute_prompt_test
 ### **Validação da Resposta**
 
 O teste valida:
+
 - ✅ Estrutura JSON completa
 - ✅ Campo `type: "ai_response"`
 - ✅ `conversation_id` válido
@@ -752,31 +1017,74 @@ O teste valida:
 O Gateway Codex oferece uma **API completa e robusta** com:
 
 ### **Funcionalidades Core**
+
 - ✅ 4 endpoints funcionais
 - ✅ **Integração REAL com Codex Core** (não placeholder!)
 - ✅ JSON-RPC com 3 métodos funcionais
 - ✅ Streaming de eventos do agente
 - ✅ Gerenciamento de sessões/conversações
+- ✅ **API Key Authentication** via middleware
 
 ### **Infraestrutura**
+
 - ✅ Configuração flexível via environment vars
 - ✅ Body limits específicos por endpoint
 - ✅ WebSocket support completo
 - ✅ Error handling detalhado
 - ✅ Observabilidade com logs estruturados
-- ✅ Middleware stack profissional
+- ✅ Middleware stack profissional (CORS, Timeout, Body Limits, Tracing)
+
+### **Ambientes**
+
+#### **Local (Desenvolvimento)**
+
+- 🟢 Host: localhost:8080
+- 🟢 Sem autenticação (desenvolvimento)
+- 🟢 Hot reload com cargo watch
+
+#### **Produção (GCP Cloud Run)**
+
+- 🟢 URL: https://wrapper-uamdjcvg7q-uc.a.run.app
+- 🟢 Region: us-central1
+- 🟢 Auto-scaling: 0-20 instâncias
+- 🟢 Resources: 2 vCPU, 4GB RAM
+- 🟢 Timeout: 300s
+- 🟢 Concurrency: 80 req/instância
+- 🟢 **API Key Authentication**: Obrigatória (exceto /health)
+- 🟢 Integrado com:
+  - Firestore (sessions, API keys)
+  - Secret Manager (credentials)
+  - Cloud Storage (artifacts)
+  - Cloud Monitoring (logs, metrics)
 
 ### **Qualidade**
+
 - ✅ Testes de integração com Codex real
 - ✅ Compilação sem erros
 - ✅ Propagação correta de erros (sem panics)
 - ✅ Production-ready
+- ✅ Deploy automatizado via Cloud Build
 
-**Status:** 🎉 **PRONTO PARA USO EM PRODUÇÃO**
+**Status:** 🎉 **EM PRODUÇÃO**
 
-- Integração real com Codex Core ✅
-- API JSON-RPC funcional ✅
-- Testes automatizados passando ✅
-- Documentação completa ✅
+- ✅ Integração real com Codex Core
+- ✅ API JSON-RPC funcional
+- ✅ Testes automatizados passando
+- ✅ Documentação completa
+- ✅ **Deployed no GCP Cloud Run**
+- ✅ Infraestrutura gerenciada (Firestore, Storage, Secrets)
+
+**Acesso Produção**:
+
+```bash
+# Service URL
+https://wrapper-uamdjcvg7q-uc.a.run.app
+
+# Obter API Key
+gcloud secrets versions access latest --secret=gateway-api-key
+
+# Health Check (público)
+curl https://wrapper-uamdjcvg7q-uc.a.run.app/health
+```
 
 **Próximas fases:** Worker pools especializados e escalabilidade cloud-native.
