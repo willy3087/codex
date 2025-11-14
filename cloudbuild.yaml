@@ -5,37 +5,38 @@
 # Output: Docker image in Artifact Registry + Cloud Run deployment
 
 steps:
-  # Step 1: Build Docker image
+  # Step 1: Build Docker image with BuildKit cache
   - name: 'gcr.io/cloud-builders/docker'
     id: 'build-image'
+    entrypoint: 'bash'
+    env:
+      - 'DOCKER_BUILDKIT=1'
     args:
-      - 'build'
-      - '-t'
-      - 'us-central1-docker.pkg.dev/$PROJECT_ID/codex-wrapper/wrapper:$COMMIT_SHA'
-      - '-t'
-      - 'us-central1-docker.pkg.dev/$PROJECT_ID/codex-wrapper/wrapper:latest'
-      - '-f'
-      - 'Dockerfile'  # Dockerfile is in the build context root
-      - '.'  # Build context is current directory (codex-rs)
-    dir: 'codex-rs'  # Change to codex-rs directory first
+      - '-c'
+      - |
+        set -e
+
+        # Criar builder buildx
+        docker buildx create --use --name=codex-builder --driver=docker-container 2>/dev/null || \
+        docker buildx use codex-builder 2>/dev/null || \
+        docker buildx create --use --name=codex-builder --driver=docker-container
+
+        cd codex-rs
+
+        # Build com cache eficiente e push
+        docker buildx build \
+          --platform linux/amd64 \
+          --cache-from type=registry,ref=us-central1-docker.pkg.dev/$PROJECT_ID/codex-wrapper/wrapper:buildcache \
+          --cache-to type=registry,ref=us-central1-docker.pkg.dev/$PROJECT_ID/codex-wrapper/wrapper:buildcache,mode=max \
+          --build-arg BUILDKIT_INLINE_CACHE=1 \
+          -t us-central1-docker.pkg.dev/$PROJECT_ID/codex-wrapper/wrapper:$COMMIT_SHA \
+          -t us-central1-docker.pkg.dev/$PROJECT_ID/codex-wrapper/wrapper:latest \
+          -f Dockerfile \
+          --push \
+          .
     timeout: '1800s' # 30 minutes for Rust build
 
-  # Step 2: Push image to Artifact Registry
-  - name: 'gcr.io/cloud-builders/docker'
-    id: 'push-image-sha'
-    args:
-      - 'push'
-      - 'us-central1-docker.pkg.dev/$PROJECT_ID/codex-wrapper/wrapper:$COMMIT_SHA'
-    waitFor: ['build-image']
-
-  - name: 'gcr.io/cloud-builders/docker'
-    id: 'push-image-latest'
-    args:
-      - 'push'
-      - 'us-central1-docker.pkg.dev/$PROJECT_ID/codex-wrapper/wrapper:latest'
-    waitFor: ['build-image']
-
-  # Step 3: Deploy to Cloud Run
+  # Step 2: Deploy to Cloud Run (imagens já foram pushed no buildx)
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     id: 'deploy-cloud-run'
     entrypoint: 'gcloud'
@@ -54,14 +55,30 @@ steps:
       - '--timeout=300s'
       - '--concurrency=80'
       - '--port=8080'
-      # Environment variables (add more as needed)
-      - '--set-env-vars=RUST_LOG=info'
+      # Environment variables
+      - '--set-env-vars=RUST_LOG=info,codex_gateway=debug'
       - '--set-env-vars=PORT=8080'
+      - '--set-env-vars=GATEWAY_HOST=0.0.0.0'
+      - '--set-env-vars=REQUEST_TIMEOUT_SECS=300'
+      - '--set-env-vars=GATEWAY_BODY_LIMIT_DEFAULT=2097152'
+      - '--set-env-vars=GATEWAY_BODY_LIMIT_JSONRPC=1048576'
+      - '--set-env-vars=GATEWAY_BODY_LIMIT_WEBHOOK=10485760'
+      - '--set-env-vars=GATEWAY_BODY_LIMIT_WEBSOCKET=1048576'
+      - '--set-env-vars=GATEWAY_BODY_LIMITS_ENABLED=true'
+      - '--set-env-vars=GATEWAY_WEBSOCKET_MAX_CONNECTIONS=5000'
+      - '--set-env-vars=GCS_BUCKET_NAME=elaihub-prod-codex-artifacts'
+      - '--set-env-vars=FIRESTORE_PROJECT_ID=elaihub-prod'
+      - '--set-env-vars=FIRESTORE_DATABASE_ID=(default)'
+      # Secrets from Secret Manager
+      - '--set-secrets=GATEWAY_API_KEY=gateway-api-key:latest'
+      - '--set-secrets=ANTHROPIC_API_KEY=anthropic-api-key:latest'
+      - '--set-secrets=OPENAI_API_KEY=openai-api-key:latest'
+      - '--set-secrets=PIPEDRIVE_API_TOKEN=pipedrive-api-token:latest'
       # Allow unauthenticated (if public API) - adjust as needed
       - '--allow-unauthenticated'
-    waitFor: ['push-image-sha', 'push-image-latest']
+    waitFor: ['build-image']  # Buildx já fez push
 
-  # Step 4: Verify deployment health
+  # Step 3: Verify deployment health
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     id: 'verify-deployment'
     entrypoint: 'bash'
@@ -94,11 +111,15 @@ steps:
 images:
   - 'us-central1-docker.pkg.dev/$PROJECT_ID/codex-wrapper/wrapper:$COMMIT_SHA'
   - 'us-central1-docker.pkg.dev/$PROJECT_ID/codex-wrapper/wrapper:latest'
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/codex-wrapper/wrapper:buildcache'
 
 # Build options
 options:
   # Use high CPU machine for faster Rust builds
   machineType: 'E2_HIGHCPU_32'
+
+  # Larger disk for cache
+  diskSizeGb: 200
 
   # Use Cloud Build's Docker cache
   substitutionOption: 'ALLOW_LOOSE'

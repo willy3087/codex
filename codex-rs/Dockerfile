@@ -57,7 +57,7 @@ COPY utils ./utils/
 COPY windows-sandbox-rs ./windows-sandbox-rs/
 COPY chatgpt ./chatgpt/
 COPY cloud-cli ./cloud-cli/
-COPY code ./code/
+# COPY code ./code/  # Directory does not exist
 
 # Copy additional configuration files
 COPY rust-toolchain.toml ./
