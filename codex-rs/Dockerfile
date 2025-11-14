@@ -56,7 +56,7 @@ COPY tui ./tui/
 COPY utils ./utils/
 COPY windows-sandbox-rs ./windows-sandbox-rs/
 COPY chatgpt ./chatgpt/
-COPY cloud-cli ./cloud-cli/
+# COPY cloud-cli ./cloud-cli/  # Directory is empty (local only)
 # COPY code ./code/  # Directory does not exist
 
 # Copy additional configuration files
