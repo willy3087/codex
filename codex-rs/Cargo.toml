@@ -275,6 +275,16 @@ strip = "symbols"
 # See https://github.com/openai/codex/issues/1411 for details.
 codegen-units = 1
 
+# Profile otimizado para builds rápidos (CI/Cloud Build)
+# Sacrifica ~5-10% de performance do binário por 5-10x de velocidade no build
+[profile.release-fast]
+inherits = "release"
+lto = "thin"          # Muito mais rápido que "fat"
+codegen-units = 16    # Paralelização (vs 1 no release)
+strip = "symbols"     # Mantém binário pequeno
+opt-level = 2         # 0-3, 2 é bom balanço
+incremental = true    # Build incremental
+
 [profile.ci-test]
 debug = 1         # Reduce debug symbol size
 inherits = "test"

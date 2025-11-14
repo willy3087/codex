@@ -1,0 +1,222 @@
+# Cloud Build OTIMIZADO para builds Rust em 5 minutos
+#
+# Uso: gcloud builds submit --config=cloudbuild-fast.yaml
+#
+# Requisitos:
+# 1. Criar buckets: gsutil mb gs://codex-build-cache && gsutil mb gs://codex-artifacts
+# 2. Habilitar APIs: gcloud services enable cloudbuild.googleapis.com
+
+steps:
+  # ============================================================
+  # FASE 1: RESTAURAR CACHES (paralelo, ~30-60s)
+  # ============================================================
+
+  - name: 'gcr.io/cloud-builders/gsutil'
+    id: 'restore-sccache'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        echo "🔄 Restaurando sccache..."
+        gsutil -m rsync -r gs://${_CACHE_BUCKET}/sccache /workspace/.sccache 2>/dev/null || {
+          echo "⚠️  Sem cache anterior, criando novo..."
+          mkdir -p /workspace/.sccache
+        }
+    timeout: '90s'
+
+  - name: 'gcr.io/cloud-builders/gsutil'
+    id: 'restore-cargo'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        echo "📦 Restaurando cargo cache..."
+        mkdir -p /workspace/.cargo/{registry,git}
+        gsutil -m rsync -r gs://${_CACHE_BUCKET}/cargo-registry /workspace/.cargo/registry 2>/dev/null || true
+        gsutil -m rsync -r gs://${_CACHE_BUCKET}/cargo-git /workspace/.cargo/git 2>/dev/null || true
+    timeout: '120s'
+
+  # ============================================================
+  # FASE 2: BUILD RUST (~3-4 minutos com cache, ~8-10 sem cache)
+  # ============================================================
+
+  - name: 'rust:1.83-slim'
+    id: 'build'
+    waitFor: ['restore-sccache', 'restore-cargo']
+    entrypoint: 'bash'
+    env:
+      - 'CARGO_HOME=/workspace/.cargo'
+      - 'SCCACHE_DIR=/workspace/.sccache'
+      - 'SCCACHE_CACHE_SIZE=10G'
+      - 'RUSTC_WRAPPER=sccache'
+      - 'CARGO_INCREMENTAL=1'
+      - 'CARGO_BUILD_JOBS=32'
+      # Reduzir tempo de link
+      - 'RUSTFLAGS=-C link-arg=-fuse-ld=lld'
+    args:
+      - '-c'
+      - |
+        set -euo pipefail
+
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "🚀 BUILD CODEX - MODO RÁPIDO"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+        # Timestamp inicial
+        START_TIME=$$(date +%s)
+
+        # Instalar ferramentas necessárias
+        echo "📥 Instalando ferramentas..."
+        apt-get update -qq && apt-get install -y -qq lld > /dev/null 2>&1
+        cargo install sccache --version 0.9.1 --locked 2>&1 | grep -v "Compiling" || true
+
+        # Status do cache
+        echo ""
+        echo "📊 Status do sccache:"
+        sccache --show-stats || true
+
+        # Build
+        cd codex-rs
+        echo ""
+        echo "🔨 Compilando (profile: ${_BUILD_PROFILE})..."
+        echo "   - Binários: gateway + cli"
+        echo "   - Jobs paralelos: 32"
+        echo "   - Cache: sccache ativo"
+        echo ""
+
+        cargo build \
+          --profile ${_BUILD_PROFILE} \
+          --bin codex-gateway \
+          --bin codex-cli \
+          -j 32 \
+          2>&1 | grep -v "Compiling" | grep -v "Finished" || true
+
+        # Verificar binários
+        BIN_PATH="target/${_BUILD_PROFILE}"
+        if [ ! -f "$$BIN_PATH/codex-gateway" ]; then
+          echo "❌ Erro: codex-gateway não foi compilado!"
+          exit 1
+        fi
+
+        # Estatísticas
+        END_TIME=$$(date +%s)
+        BUILD_TIME=$$((END_TIME - START_TIME))
+
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "✅ BUILD CONCLUÍDO EM $${BUILD_TIME}s"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+        echo "📦 Binários gerados:"
+        ls -lh $$BIN_PATH/codex-gateway $$BIN_PATH/codex-cli
+        echo ""
+        echo "📊 Estatísticas do cache:"
+        sccache --show-stats
+        echo ""
+    timeout: '600s'
+
+  # ============================================================
+  # FASE 3: SALVAR CACHES (paralelo, background, ~30-60s)
+  # ============================================================
+
+  - name: 'gcr.io/cloud-builders/gsutil'
+    id: 'save-sccache'
+    waitFor: ['build']
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        echo "💾 Salvando sccache..."
+        gsutil -m rsync -r -d /workspace/.sccache gs://${_CACHE_BUCKET}/sccache
+        echo "✅ sccache salvo"
+    timeout: '120s'
+
+  - name: 'gcr.io/cloud-builders/gsutil'
+    id: 'save-cargo'
+    waitFor: ['build']
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        echo "💾 Salvando cargo cache..."
+        gsutil -m rsync -r -d /workspace/.cargo/registry gs://${_CACHE_BUCKET}/cargo-registry
+        gsutil -m rsync -r -d /workspace/.cargo/git gs://${_CACHE_BUCKET}/cargo-git
+        echo "✅ cargo cache salvo"
+    timeout: '180s'
+
+  # ============================================================
+  # FASE 4: CRIAR IMAGEM DOCKER (multi-stage, ~1-2 min)
+  # ============================================================
+
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'docker-build'
+    waitFor: ['build']
+    args:
+      - 'build'
+      - '-t'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/codex-wrapper/wrapper:$SHORT_SHA'
+      - '-t'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/codex-wrapper/wrapper:latest'
+      - '-f'
+      - 'Dockerfile.fast'
+      - '--build-arg'
+      - 'BUILD_PROFILE=${_BUILD_PROFILE}'
+      - '.'
+    dir: 'codex-rs'
+    timeout: '300s'
+
+  # ============================================================
+  # FASE 5: PUSH & DEPLOY (~1-2 min)
+  # ============================================================
+
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'docker-push'
+    waitFor: ['docker-build']
+    args:
+      - 'push'
+      - '--all-tags'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/codex-wrapper/wrapper'
+
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: 'deploy'
+    waitFor: ['docker-push']
+    entrypoint: 'gcloud'
+    args:
+      - 'run'
+      - 'deploy'
+      - 'wrapper'
+      - '--image=us-central1-docker.pkg.dev/$PROJECT_ID/codex-wrapper/wrapper:$SHORT_SHA'
+      - '--region=us-central1'
+      - '--platform=managed'
+      - '--max-instances=20'
+      - '--cpu=2'
+      - '--memory=4Gi'
+      - '--timeout=300s'
+      - '--allow-unauthenticated'
+      - '--set-env-vars=RUST_LOG=info,PORT=8080'
+
+# Artefatos
+artifacts:
+  objects:
+    location: 'gs://${_ARTIFACTS_BUCKET}/builds/${SHORT_SHA}'
+    paths:
+      - 'codex-rs/target/${_BUILD_PROFILE}/codex-gateway'
+      - 'codex-rs/target/${_BUILD_PROFILE}/codex-cli'
+
+images:
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/codex-wrapper/wrapper:$SHORT_SHA'
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/codex-wrapper/wrapper:latest'
+
+options:
+  machineType: 'E2_HIGHCPU_32'  # 32 vCPUs essencial para build rápido
+  diskSizeGb: 200
+  logging: CLOUD_LOGGING_ONLY
+
+timeout: '900s'  # 15 min (segurança, deve terminar em ~5-7 min)
+
+substitutions:
+  _CACHE_BUCKET: 'codex-build-cache'
+  _ARTIFACTS_BUCKET: 'codex-artifacts'
+  _BUILD_PROFILE: 'release-fast'
+
+tags: ['codex', 'fast-build', 'rust']

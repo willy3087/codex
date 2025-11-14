@@ -1,0 +1,43 @@
+# Dockerfile otimizado para Cloud Build
+# Usa binários PRÉ-COMPILADOS do Cloud Build (não compila aqui)
+# Resultado: imagem Docker criada em ~30 segundos
+
+# Argumento: qual profile foi usado no build
+ARG BUILD_PROFILE=release-fast
+
+# ============================================================
+# STAGE: Runtime (imagem final, super leve)
+# ============================================================
+FROM debian:bookworm-slim
+
+# Instalar dependências de runtime mínimas
+RUN apt-get update && \
+    apt-get install -y \
+      ca-certificates \
+      libssl3 \
+      && \
+    rm -rf /var/lib/apt/lists/*
+
+# Criar usuário não-root
+RUN useradd -m -u 1000 codex
+
+# Copiar binário PRÉ-COMPILADO do Cloud Build
+ARG BUILD_PROFILE
+COPY target/${BUILD_PROFILE}/codex-gateway /usr/local/bin/codex-gateway
+
+# Permissões
+RUN chmod +x /usr/local/bin/codex-gateway && \
+    chown codex:codex /usr/local/bin/codex-gateway
+
+# Configuração
+USER codex
+WORKDIR /home/codex
+
+EXPOSE 8080
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD ["/bin/sh", "-c", "curl -f http://localhost:8080/health || exit 1"]
+
+# Entrypoint
+ENTRYPOINT ["/usr/local/bin/codex-gateway"]
