@@ -48,8 +48,16 @@ RUN useradd -m -u 1000 gateway
 RUN mkdir -p /home/gateway/.codex && \
     chown -R gateway:gateway /home/gateway/.codex
 
-# Copy config.toml from repository (for Cloud Run - no volumes available)
-COPY --from=builder /build/.github/codex/home/config.toml /home/gateway/.codex/config.toml
+# Create config.toml inline (for Cloud Run - no volumes available)
+RUN printf 'model = "gpt-4o"\n\
+model_provider = "openai-chat-completions"\n\
+\n\
+[model_providers.openai-chat-completions]\n\
+name = "OpenAI using Chat Completions"\n\
+base_url = "https://api.openai.com/v1"\n\
+env_key = "OPENAI_API_KEY"\n\
+wire_api = "chat"\n\
+query_params = {}\n' > /home/gateway/.codex/config.toml
 
 # Copy binary from builder
 COPY --from=builder /build/codex-rs/target/release/codex-gateway /usr/local/bin/codex-gateway
