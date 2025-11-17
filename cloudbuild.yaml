@@ -21,7 +21,7 @@ steps:
         docker buildx use codex-builder 2>/dev/null || \
         docker buildx create --use --name=codex-builder --driver=docker-container
 
-        cd codex-rs
+        cd codex-rs/gateway
 
         # Build com cache eficiente e push
         docker buildx build \
@@ -33,7 +33,7 @@ steps:
           -t us-central1-docker.pkg.dev/$PROJECT_ID/codex-wrapper/wrapper:latest \
           -f Dockerfile \
           --push \
-          .
+          ../..
     timeout: '1800s' # 30 minutes for Rust build
 
   # Step 2: Deploy to Cloud Run (imagens já foram pushed no buildx)
@@ -70,11 +70,16 @@ steps:
       - '--set-env-vars=GCS_BUCKET_NAME=elaihub-prod-codex-artifacts'
       - '--set-env-vars=FIRESTORE_PROJECT_ID=elaihub-prod'
       - '--set-env-vars=FIRESTORE_DATABASE_ID=(default)'
+      # Codex Configuration - CRITICAL for OpenAI GPT-4o support
+      - '--set-env-vars=CODEX_HOME=/home/gateway/.codex'
+      # OAuth Configuration
+      - '--set-env-vars=OAUTH_CLIENT_ID=codex-gateway-client'
       # Secrets from Secret Manager
       - '--set-secrets=GATEWAY_API_KEY=gateway-api-key:latest'
       - '--set-secrets=ANTHROPIC_API_KEY=anthropic-api-key:latest'
       - '--set-secrets=OPENAI_API_KEY=openai-api-key:latest'
       - '--set-secrets=PIPEDRIVE_API_TOKEN=pipedrive-api-token:latest'
+      - '--set-secrets=OAUTH_CLIENT_SECRET=oauth-client-secret:latest'
       # Allow unauthenticated (if public API) - adjust as needed
       - '--allow-unauthenticated'
     waitFor: ['build-image']  # Buildx já fez push

@@ -4,6 +4,7 @@ use crate::error::GatewayResult;
 use crate::handlers::exec::{handle_exec, handle_exec_resume};
 use crate::handlers::health::health_check;
 use crate::handlers::jsonrpc::handle_jsonrpc;
+use crate::handlers::oauth::{handle_oauth_authorize, handle_oauth_token};
 use crate::handlers::webhook::handle_webhook;
 use crate::handlers::websocket::handle_websocket_upgrade;
 use crate::middleware::api_key::api_key_middleware;
@@ -51,6 +52,9 @@ pub async fn create_router(state: AppState) -> GatewayResult<Router> {
     let app = Router::new()
         // Health check endpoint (no auth required)
         .route("/health", get(health_check))
+        // OAuth endpoints (no auth required for OAuth flow)
+        .route("/oauth/authorize", get(handle_oauth_authorize))
+        .route("/oauth/token", post(handle_oauth_token))
         // JSON-RPC endpoint for protocol communication
         .route("/jsonrpc", post(handle_jsonrpc))
         // Exec endpoint for real codex-exec mode (JSONL events)

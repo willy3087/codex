@@ -14,7 +14,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLI_SCRIPT="$SCRIPT_DIR/gateway_cli.py"
 
 # Gateway URL padrão
-export GATEWAY_URL="${GATEWAY_URL:-https://wrapper-uamdjcvg7q-uc.a.run.app}"
+export GATEWAY_URL="${GATEWAY_URL:-https://localhost:3000}"
 
 # Função para exibir ajuda
 show_help() {
@@ -31,7 +31,7 @@ OPTIONS:
     --health            Verifica saúde do gateway e sai
 
 ENVIRONMENT VARIABLES:
-    GATEWAY_URL         URL do gateway (padrão: https://wrapper-uamdjcvg7q-uc.a.run.app)
+    GATEWAY_URL         URL do gateway (padrão: https://localhost:3000)
     GATEWAY_KEY         API Key para autenticação
 
 EXAMPLES:
@@ -42,7 +42,7 @@ EXAMPLES:
     gateway --key "sua-api-key"
 
     # Com URL customizada
-    gateway --url "https://outro-gateway.run.app"
+    gateway --url "https://0.0.0.0:3000"
 
     # Verificar saúde
     gateway --health

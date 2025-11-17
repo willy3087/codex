@@ -1,0 +1,59 @@
+version: '3.8'
+
+services:
+  gateway:
+    build:
+      context: ../..
+      dockerfile: codex-rs/gateway/Dockerfile
+    image: codex-gateway:latest
+    container_name: codex-gateway
+    ports:
+      - "3000:8080"
+    environment:
+      # Server Configuration
+      - PORT=8080
+      - RUST_LOG=info,codex_gateway=debug
+
+      # Codex Configuration
+      - CODEX_HOME=/home/gateway/.codex
+
+      # OpenAI API
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+
+      # Optional: Anthropic API
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+
+      # Gateway Authentication
+      - GATEWAY_API_KEY=${GATEWAY_API_KEY}
+
+      # OAuth 2.0 Configuration
+      - OAUTH_CLIENT_ID=${OAUTH_CLIENT_ID:-codex-gateway-client}
+      - OAUTH_CLIENT_SECRET=${OAUTH_CLIENT_SECRET}
+
+    volumes:
+      # Persistent volume for Codex home (sessions, logs, etc)
+      - codex-home:/home/gateway/.codex
+
+      # Mount config.toml (read-only)
+      # Create this file first with OpenAI configuration
+      - ./config/config.toml:/home/gateway/.codex/config.toml:ro
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+    restart: unless-stopped
+
+    networks:
+      - codex-network
+
+volumes:
+  codex-home:
+    driver: local
+
+networks:
+  codex-network:
+    driver: bridge

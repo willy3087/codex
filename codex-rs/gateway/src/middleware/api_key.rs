@@ -116,6 +116,8 @@ impl ApiKeyAuth {
                 "/health".to_string(),
                 "/metrics".to_string(),
                 "/ready".to_string(),
+                "/oauth/authorize".to_string(),
+                "/oauth/token".to_string(),
             ],
         }
     }

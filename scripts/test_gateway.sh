@@ -2,10 +2,10 @@
 # Teste todos os endpoints em PRODUÇÃO (GCP Cloud Run)
 
 # Configuração
-GATEWAY_URL="https://wrapper-uamdjcvg7q-uc.a.run.app"
+GATEWAY_URL="http://localhost:3000"
 GATEWAY_KEY="a44c72cf24f7dcd1012bf8e7a2693b9c7385981cede7b95699fc4249285fb2ff"
 
-echo "Testing Codex Gateway in PRODUCTION (GCP Cloud Run)"
+echo "Testing Codex Gateway in LOCAL DOCKER"
 echo "URL: $GATEWAY_URL"
 echo ""
 

@@ -296,7 +296,7 @@ async def main():
     # Obter configurações
     gateway_url = os.getenv(
         "GATEWAY_URL",
-        "https://wrapper-467992722695.us-central1.run.app"
+        "http://localhost:3000"
     )
 
     # Tentar obter API key de múltiplas fontes (ordem de prioridade)

@@ -1,6 +1,6 @@
 # Multi-stage build for Codex Gateway
 # Stage 1: Build environment
-FROM rust:1.83-slim AS builder
+FROM rust:1.90-slim AS builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
@@ -30,6 +30,10 @@ RUN apt-get update && apt-get install -y \
 # Create non-root user
 RUN useradd -m -u 1000 gateway
 
+# Create Codex home directory with proper permissions
+RUN mkdir -p /home/gateway/.codex && \
+    chown -R gateway:gateway /home/gateway/.codex
+
 # Copy binary from builder
 COPY --from=builder /build/codex-rs/target/release/codex-gateway /usr/local/bin/codex-gateway
 
@@ -38,6 +42,9 @@ RUN chown gateway:gateway /usr/local/bin/codex-gateway
 
 # Switch to non-root user
 USER gateway
+
+# Set CODEX_HOME environment variable
+ENV CODEX_HOME=/home/gateway/.codex
 
 # Expose port
 EXPOSE 8080
